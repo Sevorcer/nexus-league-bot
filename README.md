@@ -14,7 +14,7 @@ Discord bot built for the `nexusexporter-clean` PostgreSQL schema with strict pe
 
 - `DISCORD_BOT_TOKEN` (required)
 - `DATABASE_URL` (required)
-- `GUILD_IDS` (optional, comma-separated guild IDs for instant command sync)
+- `GUILD_IDS` (optional, comma-separated guild IDs for instant startup command sync; bot also globally syncs and syncs on new guild joins)
 
 ## Local Run
 
