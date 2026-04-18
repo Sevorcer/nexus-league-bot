@@ -24,7 +24,7 @@ NO_SETUP_MESSAGE = "Please run `/setup` first to configure your league."
 DEFAULT_ADMIN_ROLES = "Commissioner,Admin,COMMISH"
 EMBED_FIELD_MAX_LENGTH = 1000
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 DEFAULT_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_API_KEY_TEMPLATE = os.getenv("OPENAI_API_KEY_TEMPLATE", "").strip()
 AUTO_POST_MATCHUP_PREVIEWS = os.getenv("AUTO_POST_MATCHUP_PREVIEWS", "true").lower() in {"1", "true", "yes", "on"}
@@ -456,21 +456,54 @@ class Database:
         with self.conn() as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id,
-                       team_name,
-                       division,
-                       wins,
-                       losses,
-                       ties,
-                       overall_rating as team_ovr,
-                       COALESCE(wins::float / NULLIF((wins + losses + ties), 0), 0) as win_pct,
-                       0::int as pts_for,
-                       0::int as pts_against,
-                       0::int as turnover_diff,
-                       0::int as seed
-                FROM team
-                WHERE league_id = %s
-                  AND id = %s
+                SELECT t.id,
+                       t.team_name,
+                       t.division,
+                       t.wins,
+                       t.losses,
+                       t.ties,
+                       t.overall_rating as team_ovr,
+                       COALESCE(t.wins::float / NULLIF((t.wins + t.losses + t.ties), 0), 0) as win_pct,
+                       COALESCE(
+                           (
+                               SELECT SUM(
+                                          CASE
+                                              WHEN s.home_team_id = t.id THEN COALESCE(s.home_score, 0)
+                                              WHEN s.away_team_id = t.id THEN COALESCE(s.away_score, 0)
+                                              ELSE 0
+                                          END
+                                      )
+                               FROM schedule s
+                               WHERE s.league_id = t.league_id
+                                 AND s.is_complete = TRUE
+                                 AND (s.home_team_id = t.id OR s.away_team_id = t.id)
+                           ),
+                           0
+                       )::int as pts_for,
+                       COALESCE(
+                           (
+                               SELECT SUM(
+                                          CASE
+                                              WHEN s.home_team_id = t.id THEN COALESCE(s.away_score, 0)
+                                              WHEN s.away_team_id = t.id THEN COALESCE(s.home_score, 0)
+                                              ELSE 0
+                                          END
+                                      )
+                               FROM schedule s
+                               WHERE s.league_id = t.league_id
+                                 AND s.is_complete = TRUE
+                                 AND (s.home_team_id = t.id OR s.away_team_id = t.id)
+                           ),
+                           0
+                       )::int as pts_against,
+                       0::int as turnover_diff, -- not available in current schema
+                       COALESCE(st.seed, 0)::int as seed
+                FROM team t
+                LEFT JOIN standing st
+                  ON st.team_id = t.id
+                 AND st.league_id = t.league_id
+                WHERE t.league_id = %s
+                  AND t.id = %s
                 LIMIT 1
                 """,
                 (league_id, team_id),
