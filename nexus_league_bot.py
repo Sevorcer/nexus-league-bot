@@ -2150,13 +2150,21 @@ class NexusLeagueBot(discord.Client):
         self.tree.add_command(player_group)
         self.add_view(TradeReviewView(self))
 
+        await self.tree.sync()
+
         if self.guild_ids:
             for guild_id in self.guild_ids:
                 guild_obj = discord.Object(id=guild_id)
                 self.tree.copy_global_to(guild=guild_obj)
                 await self.tree.sync(guild=guild_obj)
-        else:
-            await self.tree.sync()
+
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        try:
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            LOGGER.info("Synced commands to new guild: %s (%s)", guild.name, guild.id)
+        except Exception as exc:
+            LOGGER.warning("Failed to sync commands to guild %s: %s", guild.id, exc)
 
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot or not message.guild:
