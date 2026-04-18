@@ -464,44 +464,40 @@ class Database:
                        t.ties,
                        t.overall_rating as team_ovr,
                        COALESCE(t.wins::float / NULLIF((t.wins + t.losses + t.ties), 0), 0) as win_pct,
-                       COALESCE(
-                           (
-                               SELECT SUM(
-                                          CASE
-                                              WHEN s.home_team_id = t.id THEN COALESCE(s.home_score, 0)
-                                              WHEN s.away_team_id = t.id THEN COALESCE(s.away_score, 0)
-                                              ELSE 0
-                                          END
-                                      )
-                               FROM schedule s
-                               WHERE s.league_id = t.league_id
-                                 AND s.is_complete = TRUE
-                                 AND (s.home_team_id = t.id OR s.away_team_id = t.id)
-                           ),
-                           0
-                       )::int as pts_for,
-                       COALESCE(
-                           (
-                               SELECT SUM(
-                                          CASE
-                                              WHEN s.home_team_id = t.id THEN COALESCE(s.away_score, 0)
-                                              WHEN s.away_team_id = t.id THEN COALESCE(s.home_score, 0)
-                                              ELSE 0
-                                          END
-                                      )
-                               FROM schedule s
-                               WHERE s.league_id = t.league_id
-                                 AND s.is_complete = TRUE
-                                 AND (s.home_team_id = t.id OR s.away_team_id = t.id)
-                           ),
-                           0
-                       )::int as pts_against,
+                       COALESCE(score.pts_for, 0)::int as pts_for,
+                       COALESCE(score.pts_against, 0)::int as pts_against,
                        0::int as turnover_diff, -- not available in current schema
                        COALESCE(st.seed, 0)::int as seed
                 FROM team t
                 LEFT JOIN standing st
                   ON st.team_id = t.id
                  AND st.league_id = t.league_id
+                LEFT JOIN LATERAL (
+                    SELECT COALESCE(
+                               SUM(
+                                   CASE
+                                       WHEN s.home_team_id = t.id THEN COALESCE(s.home_score, 0)
+                                       WHEN s.away_team_id = t.id THEN COALESCE(s.away_score, 0)
+                                       ELSE 0
+                                   END
+                               ),
+                               0
+                           )::int as pts_for,
+                           COALESCE(
+                               SUM(
+                                   CASE
+                                       WHEN s.home_team_id = t.id THEN COALESCE(s.away_score, 0)
+                                       WHEN s.away_team_id = t.id THEN COALESCE(s.home_score, 0)
+                                       ELSE 0
+                                   END
+                               ),
+                               0
+                           )::int as pts_against
+                    FROM schedule s
+                    WHERE s.league_id = t.league_id
+                      AND s.is_complete = TRUE
+                      AND (s.home_team_id = t.id OR s.away_team_id = t.id)
+                ) score ON TRUE
                 WHERE t.league_id = %s
                   AND t.id = %s
                 LIMIT 1
