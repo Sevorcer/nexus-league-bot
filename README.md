@@ -29,7 +29,12 @@ python nexus_league_bot.py
 
 - `/setup league league_id:<int>`
 - `/setup channels log:<channel> leaders:<channel>`
+- `/setup news_channel channel:<channel>`
+- `/setup trade_channels committee_role:<role> review_channel:<channel> announcements_channel:<channel> [required_approvals] [required_denials]`
+- `/setup openai_key key:<string>`
+- `/setup xp level_up_channel:<channel> cooldown_seconds:<int> min_message_len:<int> [blacklist_channels]`
 - `/config`
+- `/ping`
 - `/leaders passing`
 - `/leaders rushing`
 - `/leaders receiving`
@@ -43,3 +48,15 @@ python nexus_league_bot.py
 - `/schedule [week:<int>]`
 - `/scores`
 - `/player search name:<string>`
+- `/trade coach_one:<member> coach_two:<member> team_one:<string> team_two:<string> team_one_gets:<string> team_two_gets:<string> [notes]`
+- `/tradehistory [limit:<int>]`
+- `/forcetrade trade_id:<int> decision:<approve|deny> [reason]`
+- `/post_weekly_news week:<int> [phase] [gotw_pick:'Away @ Home'] [channel]`
+- `/create_weekly_channels week:<int> [category_name]`
+- `/xprank [user]`
+- `/xplevel [user]`
+- `/xpleaderboard`
+- `/createbounty title:<string> reward:<number> description:<string>`
+- `/bounties`
+- `/claimbounty bounty_id:<int>`
+- `/editbounty bounty_id:<int> [title] [description] [reward]`
