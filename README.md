@@ -51,7 +51,7 @@ python nexus_league_bot.py
 - `/trade coach_one:<member> coach_two:<member> team_one:<string> team_two:<string> team_one_gets:<string> team_two_gets:<string> [notes]`
 - `/tradehistory [limit:<int>]`
 - `/forcetrade trade_id:<int> decision:<approve|deny> [reason]`
-- `/post_weekly_news week:<int> [channel]`
+- `/post_weekly_news week:<int> [phase] [gotw_pick:'Away @ Home'] [channel]`
 - `/create_weekly_channels week:<int> [category_name]`
 - `/xprank [user]`
 - `/xplevel [user]`

@@ -1930,7 +1930,13 @@ class NexusLeagueBot(discord.Client):
             await interaction.followup.send(f"Trade **#{trade_id}** was force-{decision.value}d.", ephemeral=True)
 
         @self.tree.command(name="post_weekly_news", description="Admin: post weekly league news")
-        async def post_weekly_news(interaction: discord.Interaction, week: int, channel: discord.TextChannel | None = None) -> None:
+        async def post_weekly_news(
+            interaction: discord.Interaction,
+            week: int,
+            phase: str | None = None,
+            gotw_pick: str | None = None,
+            channel: discord.TextChannel | None = None,
+        ) -> None:
             if not interaction.guild or not await self.user_is_admin(interaction):
                 await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
                 return
@@ -1950,7 +1956,18 @@ class NexusLeagueBot(discord.Client):
             standings = await asyncio.to_thread(self.db.fetch_standings, league_id)
             scored = sorted(games, key=lambda row: abs(safe_int(row.get("home_wins")) - safe_int(row.get("away_wins"))))
             top_games = [{"away_team": row.get("away_team"), "home_team": row.get("home_team")} for row in scored[:3]]
-            facts = {"week": week, "standings": standings[:5], "top_games": top_games}
+            gotw_entry = top_games[0] if top_games else None
+            if gotw_pick and "@" in gotw_pick:
+                left, right = [part.strip() for part in gotw_pick.split("@", 1)]
+                if left and right:
+                    gotw_entry = {"away_team": left, "home_team": right}
+            facts = {
+                "phase": safe_text(phase, "regular season"),
+                "week": week,
+                "standings": standings[:5],
+                "top_games": top_games,
+                "gotw_pick": gotw_entry,
+            }
             fallback = template_weekly_news_text(facts)
             used_ai = False
             article = fallback
@@ -1978,10 +1995,16 @@ class NexusLeagueBot(discord.Client):
                 return
 
             embed = discord.Embed(
-                title=f"📰 Week {week} League News",
+                title=f"📰 {safe_text(phase, 'Regular Season').title()} Week {week} League News",
                 description=article,
                 color=0x1ABC9C,
             )
+            if isinstance(gotw_entry, dict) and gotw_entry.get("away_team") and gotw_entry.get("home_team"):
+                embed.add_field(
+                    name="GOTW Pick",
+                    value=f"{safe_text(gotw_entry.get('away_team'))} @ {safe_text(gotw_entry.get('home_team'))}",
+                    inline=False,
+                )
             embed.set_footer(text="AI-assisted report" if used_ai else "Template report")
             await news_channel.send(embed=embed)
             await interaction.followup.send(f"Posted week {week} news in {news_channel.mention} ({'AI' if used_ai else 'template'} mode).", ephemeral=True)
@@ -2072,7 +2095,7 @@ class NexusLeagueBot(discord.Client):
                         guild.id,
                     )
                     embed = discord.Embed(
-                        title=f"�� {facts['headline']}",
+                        title=f"📰 {facts['headline']}",
                         description=preview_text,
                         color=0x3498DB if not is_gotw else 0xF39C12,
                     )
