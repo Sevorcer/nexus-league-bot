@@ -15,6 +15,7 @@ LOGGER = logging.getLogger("nexus-league-bot")
 
 NO_SETUP_MESSAGE = "Please run `/setup` first to configure your league."
 DEFAULT_ADMIN_ROLES = "Commissioner,Admin,COMMISH"
+EMBED_FIELD_MAX_LENGTH = 1000
 
 
 def parse_guild_ids() -> list[int]:
@@ -142,35 +143,116 @@ class Database:
             return cur.fetchall()
 
     def fetch_passing_leaders(self, league_id: int) -> list[dict[str, Any]]:
-        return self._fetch_stat_leaders(
-            league_id,
-            select_extra="SUM(ps.pass_yards) AS pass_yards, SUM(ps.pass_tds) AS pass_tds, SUM(ps.interceptions) AS interceptions",
-            order_by="SUM(ps.pass_yards) DESC",
-        )
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT p.id,
+                       p.first_name,
+                       p.last_name,
+                       p.position,
+                       t.team_name,
+                       SUM(ps.pass_yards) AS pass_yards,
+                       SUM(ps.pass_tds) AS pass_tds,
+                       SUM(ps.interceptions) AS interceptions
+                FROM playerstats ps
+                JOIN player p
+                  ON p.id = ps.player_id
+                 AND p.league_id = ps.league_id
+                LEFT JOIN team t
+                  ON t.id = p.team_id
+                 AND t.league_id = p.league_id
+                WHERE ps.league_id = %s
+                GROUP BY p.id, p.first_name, p.last_name, p.position, t.team_name
+                ORDER BY SUM(ps.pass_yards) DESC, p.last_name ASC
+                LIMIT 5
+                """,
+                (league_id,),
+            )
+            return cur.fetchall()
 
     def fetch_rushing_leaders(self, league_id: int) -> list[dict[str, Any]]:
-        return self._fetch_stat_leaders(
-            league_id,
-            select_extra="SUM(ps.rush_yards) AS rush_yards, SUM(ps.rush_tds) AS rush_tds",
-            order_by="SUM(ps.rush_yards) DESC",
-        )
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT p.id,
+                       p.first_name,
+                       p.last_name,
+                       p.position,
+                       t.team_name,
+                       SUM(ps.rush_yards) AS rush_yards,
+                       SUM(ps.rush_tds) AS rush_tds
+                FROM playerstats ps
+                JOIN player p
+                  ON p.id = ps.player_id
+                 AND p.league_id = ps.league_id
+                LEFT JOIN team t
+                  ON t.id = p.team_id
+                 AND t.league_id = p.league_id
+                WHERE ps.league_id = %s
+                GROUP BY p.id, p.first_name, p.last_name, p.position, t.team_name
+                ORDER BY SUM(ps.rush_yards) DESC, p.last_name ASC
+                LIMIT 5
+                """,
+                (league_id,),
+            )
+            return cur.fetchall()
 
     def fetch_receiving_leaders(self, league_id: int) -> list[dict[str, Any]]:
-        return self._fetch_stat_leaders(
-            league_id,
-            select_extra="SUM(ps.rec_yards) AS rec_yards, SUM(ps.rec_tds) AS rec_tds, SUM(ps.receptions) AS receptions",
-            order_by="SUM(ps.rec_yards) DESC",
-        )
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT p.id,
+                       p.first_name,
+                       p.last_name,
+                       p.position,
+                       t.team_name,
+                       SUM(ps.rec_yards) AS rec_yards,
+                       SUM(ps.rec_tds) AS rec_tds,
+                       SUM(ps.receptions) AS receptions
+                FROM playerstats ps
+                JOIN player p
+                  ON p.id = ps.player_id
+                 AND p.league_id = ps.league_id
+                LEFT JOIN team t
+                  ON t.id = p.team_id
+                 AND t.league_id = p.league_id
+                WHERE ps.league_id = %s
+                GROUP BY p.id, p.first_name, p.last_name, p.position, t.team_name
+                ORDER BY SUM(ps.rec_yards) DESC, p.last_name ASC
+                LIMIT 5
+                """,
+                (league_id,),
+            )
+            return cur.fetchall()
 
     def fetch_defense_leaders(self, league_id: int) -> list[dict[str, Any]]:
-        return self._fetch_stat_leaders(
-            league_id,
-            select_extra=(
-                "SUM(ps.tackles) AS tackles, SUM(ps.sacks) AS sacks, "
-                "SUM(ps.defensive_ints) AS defensive_ints, SUM(ps.fumbles_forced) AS fumbles_forced"
-            ),
-            order_by="SUM(ps.tackles) DESC",
-        )
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT p.id,
+                       p.first_name,
+                       p.last_name,
+                       p.position,
+                       t.team_name,
+                       SUM(ps.tackles) AS tackles,
+                       SUM(ps.sacks) AS sacks,
+                       SUM(ps.defensive_ints) AS defensive_ints,
+                       SUM(ps.fumbles_forced) AS fumbles_forced
+                FROM playerstats ps
+                JOIN player p
+                  ON p.id = ps.player_id
+                 AND p.league_id = ps.league_id
+                LEFT JOIN team t
+                  ON t.id = p.team_id
+                 AND t.league_id = p.league_id
+                WHERE ps.league_id = %s
+                GROUP BY p.id, p.first_name, p.last_name, p.position, t.team_name
+                ORDER BY SUM(ps.tackles) DESC, p.last_name ASC
+                LIMIT 5
+                """,
+                (league_id,),
+            )
+            return cur.fetchall()
 
     def fetch_touchdown_leaders(self, league_id: int) -> list[dict[str, Any]]:
         with self.conn() as conn, conn.cursor() as cur:
@@ -195,32 +277,6 @@ class Database:
                 WHERE ps.league_id = %s
                 GROUP BY p.id, p.first_name, p.last_name, p.position, t.team_name
                 ORDER BY total_tds DESC, p.last_name ASC
-                LIMIT 5
-                """,
-                (league_id,),
-            )
-            return cur.fetchall()
-
-    def _fetch_stat_leaders(self, league_id: int, select_extra: str, order_by: str) -> list[dict[str, Any]]:
-        with self.conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                f"""
-                SELECT p.id,
-                       p.first_name,
-                       p.last_name,
-                       p.position,
-                       t.team_name,
-                       {select_extra}
-                FROM playerstats ps
-                JOIN player p
-                  ON p.id = ps.player_id
-                 AND p.league_id = ps.league_id
-                LEFT JOIN team t
-                  ON t.id = p.team_id
-                 AND t.league_id = p.league_id
-                WHERE ps.league_id = %s
-                GROUP BY p.id, p.first_name, p.last_name, p.position, t.team_name
-                ORDER BY {order_by}, p.last_name ASC
                 LIMIT 5
                 """,
                 (league_id,),
@@ -697,17 +753,19 @@ class NexusLeagueBot(discord.Client):
             return
 
         lines = [
-            f"**{p['first_name']} {p['last_name']}** | {p['position']} | OVR {p['overall_rating']} | Age {p['age']} | {p['dev_trait']}"
+            f"**{p.get('first_name', '')} {p.get('last_name', '')}** | "
+            f"{p.get('position', '-')} | OVR {p.get('overall_rating', '-')} | "
+            f"Age {p.get('age', '-')} | {p.get('dev_trait', '-')}"
             for p in roster
         ]
         chunks: list[str] = []
         current = ""
         for line in lines:
-            if len(current) + len(line) + 1 > 1000:
+            if len(current) + len(line) + 1 > EMBED_FIELD_MAX_LENGTH:
                 chunks.append(current)
                 current = line
             else:
-                current = f"{current}\n{line}".strip()
+                current = f"{current}\n{line}" if current else line
         if current:
             chunks.append(current)
 
