@@ -22,7 +22,13 @@ LOGGER = logging.getLogger("nexus-league-bot")
 
 NO_SETUP_MESSAGE = "Please run `/setup` first to configure your league."
 DEFAULT_ADMIN_ROLES = "Commissioner,Admin,COMMISH"
-EMBED_FIELD_MAX_LENGTH = 1000
+ROSTER_PAGE_SIZE = 18
+DEV_TRAIT_LABELS = {
+    0: "Normal",
+    1: "Star ⭐",
+    2: "Superstar 🌟",
+    3: "X-Factor 💎",
+}
 
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 DEFAULT_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
@@ -110,6 +116,23 @@ def team_color_from_name(team_name: str | None) -> discord.Color:
 
 def player_display_name(row: dict[str, Any]) -> str:
     return f"{row.get('first_name', '')} {row.get('last_name', '')}".strip()
+
+
+def dev_trait_label(value: Any) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return "-"
+        try:
+            return DEV_TRAIT_LABELS.get(int(stripped), stripped)
+        except ValueError:
+            return stripped
+    try:
+        return DEV_TRAIT_LABELS.get(int(value), str(value))
+    except Exception:
+        return str(value)
 
 
 def detect_profile_storyline(team_row: dict[str, Any]) -> str:
@@ -1492,6 +1515,49 @@ class TradeReviewView(discord.ui.View):
         await self._handle_vote(interaction, "deny")
 
 
+class RosterPaginationView(discord.ui.View):
+    def __init__(self, embeds: list[discord.Embed], author_id: int | None = None) -> None:
+        super().__init__(timeout=120)
+        self.embeds = embeds
+        self.author_id = author_id
+        self.page_index = 0
+        self.message: discord.Message | None = None
+        self._update_buttons()
+
+    def _update_buttons(self) -> None:
+        self.previous_page.disabled = self.page_index <= 0
+        self.next_page.disabled = self.page_index >= len(self.embeds) - 1
+
+    async def _edit_page(self, interaction: discord.Interaction) -> None:
+        if self.author_id is not None and interaction.user.id != self.author_id:
+            await interaction.response.send_message("Only the command author can change roster pages.", ephemeral=True)
+            return
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self.embeds[self.page_index], view=self)
+
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
+    async def previous_page(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if self.page_index > 0:
+            self.page_index -= 1
+        await self._edit_page(interaction)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary)
+    async def next_page(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if self.page_index < len(self.embeds) - 1:
+            self.page_index += 1
+        await self._edit_page(interaction)
+
+
 class NexusLeagueBot(discord.Client):
     def __init__(self, db: Database, guild_ids: list[int]) -> None:
         intents = discord.Intents.default()
@@ -2421,27 +2487,40 @@ class NexusLeagueBot(discord.Client):
             await interaction.response.send_message(embed=embed)
             return
 
+        roster = sorted(
+            roster,
+            key=lambda player: (
+                -safe_int(player.get("overall_rating")),
+                safe_text(player.get("last_name")).lower(),
+                safe_text(player.get("first_name")).lower(),
+            ),
+        )
         lines = [
-            f"**{p.get('first_name', '')} {p.get('last_name', '')}** | "
+            f"{safe_text(p.get('first_name'))} {safe_text(p.get('last_name'))} | "
             f"{p.get('position', '-')} | OVR {p.get('overall_rating', '-')} | "
-            f"Age {p.get('age', '-')} | {p.get('dev_trait', '-')}"
+            f"Age {p.get('age', '-')} | {dev_trait_label(p.get('dev_trait'))}"
             for p in roster
         ]
-        chunks: list[str] = []
-        current = ""
-        for line in lines:
-            if len(current) + len(line) + 1 > EMBED_FIELD_MAX_LENGTH:
-                chunks.append(current)
-                current = line
-            else:
-                current = f"{current}\n{line}" if current else line
-        if current:
-            chunks.append(current)
+        pages = [lines[index : index + ROSTER_PAGE_SIZE] for index in range(0, len(lines), ROSTER_PAGE_SIZE)]
+        embeds: list[discord.Embed] = []
+        total_pages = len(pages)
+        base_description = f"{team.get('city_name') or ''} {team['team_name']}".strip()
+        for idx, page_lines in enumerate(pages, start=1):
+            page_embed = discord.Embed(
+                title=f"{team['team_name']} Roster",
+                description=f"{base_description}\n\n" + "\n".join(page_lines),
+                color=team_color_from_name(team["team_name"]),
+            )
+            page_embed.set_footer(text=f"Page {idx} of {total_pages}")
+            embeds.append(page_embed)
 
-        for idx, chunk in enumerate(chunks, start=1):
-            embed.add_field(name=f"Players {idx}", value=chunk, inline=False)
+        if len(embeds) == 1:
+            await interaction.response.send_message(embed=embeds[0])
+            return
 
-        await interaction.response.send_message(embed=embed)
+        view = RosterPaginationView(embeds, author_id=interaction.user.id)
+        await interaction.response.send_message(embed=embeds[0], view=view)
+        view.message = await interaction.original_response()
 
     async def send_team_info(self, interaction: discord.Interaction, team_name: str) -> None:
         league_id = await self.get_league_id(interaction)
