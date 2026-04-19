@@ -130,14 +130,30 @@ def leader_rank_text(rank: int) -> str:
 
 def season_leader_stat_text(row: dict[str, Any], category: str) -> str:
     if category == "passing":
-        return f"{safe_int(row.get('pass_yards'))} yds | {safe_int(row.get('pass_tds'))} TD | {safe_int(row.get('interceptions'))} INT"
+        return (
+            f"YDS `{safe_int(row.get('pass_yards')):>5}` | "
+            f"TD `{safe_int(row.get('pass_tds')):>2}` | "
+            f"INT `{safe_int(row.get('interceptions')):>2}`"
+        )
     if category == "rushing":
-        return f"{safe_int(row.get('rush_yards'))} yds | {safe_int(row.get('rush_tds'))} TD"
+        return (
+            f"YDS `{safe_int(row.get('rush_yards')):>5}` | "
+            f"TD `{safe_int(row.get('rush_tds')):>2}`"
+        )
     if category == "receiving":
-        return f"{safe_int(row.get('rec_yards'))} yds | {safe_int(row.get('rec_tds'))} TD | {safe_int(row.get('receptions'))} REC"
+        return (
+            f"YDS `{safe_int(row.get('rec_yards')):>5}` | "
+            f"TD `{safe_int(row.get('rec_tds')):>2}` | "
+            f"REC `{safe_int(row.get('receptions')):>3}`"
+        )
     if category == "defense":
-        return f"{safe_int(row.get('tackles'))} TKL | {safe_int(row.get('sacks'))} SCK | {safe_int(row.get('defensive_ints'))} INT | {safe_int(row.get('fumbles_forced'))} FF"
-    return f"{safe_int(row.get('total_tds'))} total TD"
+        return (
+            f"TKL `{safe_int(row.get('tackles')):>3}` | "
+            f"SCK `{safe_float(row.get('sacks')):>4.1f}` | "
+            f"INT `{safe_int(row.get('defensive_ints')):>2}` | "
+            f"FF `{safe_int(row.get('fumbles_forced')):>2}`"
+        )
+    return f"TOTAL TD `{safe_int(row.get('total_tds')):>2}`"
 
 
 def dev_trait_label(value: Any) -> str:
@@ -2406,40 +2422,35 @@ class NexusLeagueBot(discord.Client):
             return
 
         categories = [
-            ("Passing", await asyncio.to_thread(self.db.fetch_passing_leaders, league_id), "passing", 0x3498DB),
-            ("Rushing", await asyncio.to_thread(self.db.fetch_rushing_leaders, league_id), "rushing", 0x2ECC71),
-            ("Receiving", await asyncio.to_thread(self.db.fetch_receiving_leaders, league_id), "receiving", 0xE67E22),
-            ("Defense", await asyncio.to_thread(self.db.fetch_defense_leaders, league_id), "defense", 0xE74C3C),
-            ("Touchdowns", await asyncio.to_thread(self.db.fetch_touchdown_leaders, league_id), "touchdowns", 0xF1C40F),
+            ("passing", "🏈 Passing Leaders", 0x3498DB, await asyncio.to_thread(self.db.fetch_passing_leaders, league_id)),
+            ("rushing", "🏃 Rushing Leaders", 0x2ECC71, await asyncio.to_thread(self.db.fetch_rushing_leaders, league_id)),
+            ("receiving", "🎯 Receiving Leaders", 0xE67E22, await asyncio.to_thread(self.db.fetch_receiving_leaders, league_id)),
+            ("defense", "🛡️ Defense Leaders", 0xE74C3C, await asyncio.to_thread(self.db.fetch_defense_leaders, league_id)),
+            ("touchdowns", "🏆 Touchdown Leaders", 0xF1C40F, await asyncio.to_thread(self.db.fetch_touchdown_leaders, league_id)),
         ]
 
         league_name = await asyncio.to_thread(self.db.get_league_name, league_id)
         header_embed = discord.Embed(
-            title=f"{league_name} - Season Leaders",
-            description="Top 5 across all categories",
+            title="Season Leaders",
+            description=f"**{league_name}**\nTop 5 across all categories",
             color=discord.Color.gold(),
         )
         await channel.send(embed=header_embed)
 
-        for label, rows, category, color in categories:
-            embed = discord.Embed(title=f"{label} Leaders", color=color)
+        for category, title, color, rows in categories:
+            embed = discord.Embed(title=title, color=color)
             if not rows:
                 embed.description = "No data found."
                 await channel.send(embed=embed)
                 continue
 
+            lines: list[str] = []
             for idx, row in enumerate(rows, start=1):
                 name = player_display_name(row)
                 team_name = row.get("team_name") or "FA"
-                position = row.get("position") or "-"
                 stat_text = season_leader_stat_text(row, category)
-                rank = leader_rank_text(idx)
-                embed.add_field(
-                    name=f"{rank} **{name}** ({position})",
-                    value=f"{team_name}\n{stat_text}",
-                    inline=False,
-                )
-
+                lines.append(f"{leader_rank_text(idx)} **{name}** ({team_name}) — {stat_text}")
+            embed.description = "\n".join(lines)
             await channel.send(embed=embed)
         await interaction.response.send_message(f"Posted season leaders to {channel.mention}.", ephemeral=True)
 
