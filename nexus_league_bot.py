@@ -2384,42 +2384,70 @@ class NexusLeagueBot(discord.Client):
             return
 
         categories = [
-            ("Passing", await asyncio.to_thread(self.db.fetch_passing_leaders, league_id), "passing"),
-            ("Rushing", await asyncio.to_thread(self.db.fetch_rushing_leaders, league_id), "rushing"),
-            ("Receiving", await asyncio.to_thread(self.db.fetch_receiving_leaders, league_id), "receiving"),
-            ("Defense", await asyncio.to_thread(self.db.fetch_defense_leaders, league_id), "defense"),
-            ("Touchdowns", await asyncio.to_thread(self.db.fetch_touchdown_leaders, league_id), "touchdowns"),
+            ("passing", "🏈 Passing Leaders", 0x3498DB, await asyncio.to_thread(self.db.fetch_passing_leaders, league_id)),
+            ("rushing", "🏃 Rushing Leaders", 0x2ECC71, await asyncio.to_thread(self.db.fetch_rushing_leaders, league_id)),
+            ("receiving", "🎯 Receiving Leaders", 0xE67E22, await asyncio.to_thread(self.db.fetch_receiving_leaders, league_id)),
+            ("defense", "🛡️ Defense Leaders", 0xE74C3C, await asyncio.to_thread(self.db.fetch_defense_leaders, league_id)),
+            ("touchdowns", "🏆 Touchdown Leaders", 0xF1C40F, await asyncio.to_thread(self.db.fetch_touchdown_leaders, league_id)),
         ]
 
         league_name = await asyncio.to_thread(self.db.get_league_name, league_id)
-        embed = discord.Embed(
-            title=f"{league_name} - Season Leaders",
-            description="Top 5 across all categories",
+        header_embed = discord.Embed(
+            title="Season Leaders",
+            description=f"**{league_name}**\nTop 5 across all categories",
             color=discord.Color.gold(),
         )
+        await channel.send(embed=header_embed)
 
-        for label, rows, category in categories:
+        def rank_label(idx: int) -> str:
+            if idx == 1:
+                return "🥇"
+            if idx == 2:
+                return "🥈"
+            if idx == 3:
+                return "🥉"
+            return f"{idx}."
+
+        for category, title, color, rows in categories:
+            embed = discord.Embed(title=title, color=color)
             if not rows:
-                embed.add_field(name=label, value="No data found.", inline=False)
+                embed.description = "No data found."
+                await channel.send(embed=embed)
                 continue
 
             lines: list[str] = []
             for idx, row in enumerate(rows, start=1):
                 name = player_display_name(row)
                 if category == "passing":
-                    stat_text = f"{row['pass_yards']} yds, {row['pass_tds']} TD, {row['interceptions']} INT"
+                    stat_text = (
+                        f"YDS `{safe_int(row.get('pass_yards')):>5}` | "
+                        f"TD `{safe_int(row.get('pass_tds')):>2}` | "
+                        f"INT `{safe_int(row.get('interceptions')):>2}`"
+                    )
                 elif category == "rushing":
-                    stat_text = f"{row['rush_yards']} yds, {row['rush_tds']} TD"
+                    stat_text = (
+                        f"YDS `{safe_int(row.get('rush_yards')):>5}` | "
+                        f"TD `{safe_int(row.get('rush_tds')):>2}`"
+                    )
                 elif category == "receiving":
-                    stat_text = f"{row['rec_yards']} yds, {row['rec_tds']} TD, {row['receptions']} REC"
+                    stat_text = (
+                        f"YDS `{safe_int(row.get('rec_yards')):>5}` | "
+                        f"TD `{safe_int(row.get('rec_tds')):>2}` | "
+                        f"REC `{safe_int(row.get('receptions')):>3}`"
+                    )
                 elif category == "defense":
-                    stat_text = f"{row['tackles']} TKL, {row['sacks']} SCK, {row['defensive_ints']} INT, {row['fumbles_forced']} FF"
+                    stat_text = (
+                        f"TKL `{safe_int(row.get('tackles')):>3}` | "
+                        f"SCK `{safe_float(row.get('sacks')):>4.1f}` | "
+                        f"INT `{safe_int(row.get('defensive_ints')):>2}` | "
+                        f"FF `{safe_int(row.get('fumbles_forced')):>2}`"
+                    )
                 else:
-                    stat_text = f"{row['total_tds']} total TD"
-                lines.append(f"{idx}. {name} ({row.get('team_name') or 'FA'}) - {stat_text}")
-            embed.add_field(name=label, value="\n".join(lines), inline=False)
+                    stat_text = f"TOTAL TD `{safe_int(row.get('total_tds')):>2}`"
+                lines.append(f"{rank_label(idx)} **{name}** ({row.get('team_name') or 'FA'}) — {stat_text}")
+            embed.description = "\n".join(lines)
+            await channel.send(embed=embed)
 
-        await channel.send(embed=embed)
         await interaction.response.send_message(f"Posted season leaders to {channel.mention}.", ephemeral=True)
 
     async def send_standings(self, interaction: discord.Interaction, post_to_channel: bool) -> None:
