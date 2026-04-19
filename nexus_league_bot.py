@@ -118,6 +118,44 @@ def player_display_name(row: dict[str, Any]) -> str:
     return f"{row.get('first_name', '')} {row.get('last_name', '')}".strip()
 
 
+def leader_rank_text(rank: int) -> str:
+    if rank == 1:
+        return "🥇"
+    if rank == 2:
+        return "🥈"
+    if rank == 3:
+        return "🥉"
+    return f"{rank}."
+
+
+def season_leader_stat_text(row: dict[str, Any], category: str) -> str:
+    if category == "passing":
+        return (
+            f"YDS `{safe_int(row.get('pass_yards')):>5}` | "
+            f"TD `{safe_int(row.get('pass_tds')):>2}` | "
+            f"INT `{safe_int(row.get('interceptions')):>2}`"
+        )
+    if category == "rushing":
+        return (
+            f"YDS `{safe_int(row.get('rush_yards')):>5}` | "
+            f"TD `{safe_int(row.get('rush_tds')):>2}`"
+        )
+    if category == "receiving":
+        return (
+            f"YDS `{safe_int(row.get('rec_yards')):>5}` | "
+            f"TD `{safe_int(row.get('rec_tds')):>2}` | "
+            f"REC `{safe_int(row.get('receptions')):>3}`"
+        )
+    if category == "defense":
+        return (
+            f"TKL `{safe_int(row.get('tackles')):>3}` | "
+            f"SCK `{safe_float(row.get('sacks')):>4.1f}` | "
+            f"INT `{safe_int(row.get('defensive_ints')):>2}` | "
+            f"FF `{safe_int(row.get('fumbles_forced')):>2}`"
+        )
+    return f"TOTAL TD `{safe_int(row.get('total_tds')):>2}`"
+
+
 def dev_trait_label(value: Any) -> str:
     if value is None:
         return "-"
@@ -2399,15 +2437,6 @@ class NexusLeagueBot(discord.Client):
         )
         await channel.send(embed=header_embed)
 
-        def rank_label(idx: int) -> str:
-            if idx == 1:
-                return "🥇"
-            if idx == 2:
-                return "🥈"
-            if idx == 3:
-                return "🥉"
-            return f"{idx}."
-
         for category, title, color, rows in categories:
             embed = discord.Embed(title=title, color=color)
             if not rows:
@@ -2418,36 +2447,11 @@ class NexusLeagueBot(discord.Client):
             lines: list[str] = []
             for idx, row in enumerate(rows, start=1):
                 name = player_display_name(row)
-                if category == "passing":
-                    stat_text = (
-                        f"YDS `{safe_int(row.get('pass_yards')):>5}` | "
-                        f"TD `{safe_int(row.get('pass_tds')):>2}` | "
-                        f"INT `{safe_int(row.get('interceptions')):>2}`"
-                    )
-                elif category == "rushing":
-                    stat_text = (
-                        f"YDS `{safe_int(row.get('rush_yards')):>5}` | "
-                        f"TD `{safe_int(row.get('rush_tds')):>2}`"
-                    )
-                elif category == "receiving":
-                    stat_text = (
-                        f"YDS `{safe_int(row.get('rec_yards')):>5}` | "
-                        f"TD `{safe_int(row.get('rec_tds')):>2}` | "
-                        f"REC `{safe_int(row.get('receptions')):>3}`"
-                    )
-                elif category == "defense":
-                    stat_text = (
-                        f"TKL `{safe_int(row.get('tackles')):>3}` | "
-                        f"SCK `{safe_float(row.get('sacks')):>4.1f}` | "
-                        f"INT `{safe_int(row.get('defensive_ints')):>2}` | "
-                        f"FF `{safe_int(row.get('fumbles_forced')):>2}`"
-                    )
-                else:
-                    stat_text = f"TOTAL TD `{safe_int(row.get('total_tds')):>2}`"
-                lines.append(f"{rank_label(idx)} **{name}** ({row.get('team_name') or 'FA'}) — {stat_text}")
+                team_name = row.get("team_name") or "FA"
+                stat_text = season_leader_stat_text(row, category)
+                lines.append(f"{leader_rank_text(idx)} **{name}** ({team_name}) — {stat_text}")
             embed.description = "\n".join(lines)
             await channel.send(embed=embed)
-
         await interaction.response.send_message(f"Posted season leaders to {channel.mention}.", ephemeral=True)
 
     async def send_standings(self, interaction: discord.Interaction, post_to_channel: bool) -> None:
