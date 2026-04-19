@@ -2410,15 +2410,17 @@ class NexusLeagueBot(discord.Client):
             await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
             return
 
+        await interaction.response.defer(ephemeral=True)
+
         config = await asyncio.to_thread(self.db.get_guild_config, interaction.guild.id)
         leaders_channel_id = int(config.get("leaders_channel_id") or 0) if config else 0
         if not leaders_channel_id:
-            await interaction.response.send_message("Leaders channel is not configured. Use `/setup channels` first.", ephemeral=True)
+            await interaction.followup.send("Leaders channel is not configured. Use `/setup channels` first.", ephemeral=True)
             return
 
         channel = interaction.guild.get_channel(leaders_channel_id)
         if not isinstance(channel, discord.TextChannel):
-            await interaction.response.send_message("Configured leaders channel was not found.", ephemeral=True)
+            await interaction.followup.send("Configured leaders channel was not found.", ephemeral=True)
             return
 
         categories = [
@@ -2452,7 +2454,7 @@ class NexusLeagueBot(discord.Client):
                 lines.append(f"{leader_rank_text(idx)} **{name}** ({team_name}) — {stat_text}")
             embed.description = "\n".join(lines)
             await channel.send(embed=embed)
-        await interaction.response.send_message(f"Posted season leaders to {channel.mention}.", ephemeral=True)
+        await interaction.followup.send(f"Posted season leaders to {channel.mention}.", ephemeral=True)
 
     async def send_standings(self, interaction: discord.Interaction, post_to_channel: bool) -> None:
         league_id = await self.get_league_id(interaction)
