@@ -609,18 +609,18 @@ class Database:
             cur.execute(
                 """
                 SELECT
-                    prs.roster_id,
-                    COALESCE(MAX(prs.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
+                    ps.player_id AS roster_id,
+                    COALESCE(MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
                     COALESCE(MAX(p.position), '-') AS position,
                     COALESCE(MAX(t.team_name), 'FA') AS team_name,
-                    SUM(COALESCE(prs.rec_yds, 0)) AS rec_yards,
-                    SUM(COALESCE(prs.rec_tds, 0)) AS rec_tds,
-                    SUM(COALESCE(prs.receptions, 0)) AS receptions
-                FROM player_receiving_stats prs
-                JOIN team t ON t.id = prs.team_id
-                LEFT JOIN player p ON p.id = prs.roster_id
-                WHERE t.league_id = %s
-                GROUP BY prs.roster_id
+                    SUM(COALESCE(ps.rec_yards, 0)) AS rec_yards,
+                    SUM(COALESCE(ps.rec_tds, 0)) AS rec_tds,
+                    SUM(COALESCE(ps.receptions, 0)) AS receptions
+                FROM playerstats ps
+                LEFT JOIN player p ON p.id = ps.player_id
+                LEFT JOIN team t ON t.id = p.team_id
+                WHERE ps.league_id = %s
+                GROUP BY ps.player_id
                 ORDER BY rec_yards DESC, player_name ASC
                 LIMIT 5
                 """,
@@ -637,7 +637,7 @@ class Database:
                     COALESCE(MAX(pds.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
                     COALESCE(MAX(p.position), '-') AS position,
                     COALESCE(MAX(t.team_name), 'FA') AS team_name,
-                    SUM(COALESCE(pds.def_tackles, 0)) AS tackles,
+                    SUM(COALESCE(pds.tackles, 0)) AS tackles,
                     SUM(COALESCE(pds.def_sacks, 0)) AS sacks,
                     SUM(COALESCE(pds.def_ints, 0)) AS defensive_ints,
                     0 AS fumbles_forced -- not present in production defensive stat table
@@ -691,16 +691,16 @@ class Database:
                     WHERE t.league_id = %s
                     GROUP BY prs.roster_id
                     UNION ALL
-                    SELECT prec.roster_id,
-                           COALESCE(MAX(prec.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown'),
+                    SELECT ps.player_id AS roster_id,
+                           COALESCE(MAX(p.first_name || ' ' || p.last_name), 'Unknown'),
                            COALESCE(MAX(p.position), '-'),
                            COALESCE(MAX(t.team_name), 'FA'),
-                           0, 0, SUM(COALESCE(prec.rec_tds, 0))
-                    FROM player_receiving_stats prec
-                    JOIN team t ON t.id = prec.team_id
-                    LEFT JOIN player p ON p.id = prec.roster_id
-                    WHERE t.league_id = %s
-                    GROUP BY prec.roster_id
+                           0, 0, SUM(COALESCE(ps.rec_tds, 0))
+                    FROM playerstats ps
+                    LEFT JOIN player p ON p.id = ps.player_id
+                    LEFT JOIN team t ON t.id = p.team_id
+                    WHERE ps.league_id = %s
+                    GROUP BY ps.player_id
                 ) combined
                 GROUP BY roster_id
                 ORDER BY total_tds DESC, player_name ASC
