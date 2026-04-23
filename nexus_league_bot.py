@@ -564,7 +564,7 @@ class Database:
                 SELECT
                     pps.roster_id,
                     COALESCE(MAX(pps.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
-                    COALESCE(MAX(pps.position), MAX(p.position), '-') AS position,
+                    COALESCE(MAX(p.position), '-') AS position,
                     COALESCE(MAX(t.team_name), 'FA') AS team_name,
                     SUM(COALESCE(pps.pass_yds, 0)) AS pass_yards,
                     SUM(COALESCE(pps.pass_tds, 0)) AS pass_tds,
@@ -588,7 +588,7 @@ class Database:
                 SELECT
                     prs.roster_id,
                     COALESCE(MAX(prs.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
-                    COALESCE(MAX(prs.position), MAX(p.position), '-') AS position,
+                    COALESCE(MAX(p.position), '-') AS position,
                     COALESCE(MAX(t.team_name), 'FA') AS team_name,
                     SUM(COALESCE(prs.rush_yds, 0)) AS rush_yards,
                     SUM(COALESCE(prs.rush_tds, 0)) AS rush_tds
@@ -611,7 +611,7 @@ class Database:
                 SELECT
                     prs.roster_id,
                     COALESCE(MAX(prs.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
-                    COALESCE(MAX(prs.position), MAX(p.position), '-') AS position,
+                    COALESCE(MAX(p.position), '-') AS position,
                     COALESCE(MAX(t.team_name), 'FA') AS team_name,
                     SUM(COALESCE(prs.rec_yds, 0)) AS rec_yards,
                     SUM(COALESCE(prs.rec_tds, 0)) AS rec_tds,
@@ -635,7 +635,7 @@ class Database:
                 SELECT
                     pds.roster_id,
                     COALESCE(MAX(pds.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
-                    COALESCE(MAX(pds.position), MAX(p.position), '-') AS position,
+                    COALESCE(MAX(p.position), '-') AS position,
                     COALESCE(MAX(t.team_name), 'FA') AS team_name,
                     SUM(COALESCE(pds.def_tackles, 0)) AS tackles,
                     SUM(COALESCE(pds.def_sacks, 0)) AS sacks,
@@ -669,7 +669,7 @@ class Database:
                 FROM (
                     SELECT pps.roster_id,
                            COALESCE(MAX(pps.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
-                           COALESCE(MAX(pps.position), MAX(p.position), '-') AS position,
+                           COALESCE(MAX(p.position), '-') AS position,
                            COALESCE(MAX(t.team_name), 'FA') AS team_name,
                            SUM(COALESCE(pps.pass_tds, 0)) AS pass_tds,
                            0 AS rush_tds,
@@ -682,7 +682,7 @@ class Database:
                     UNION ALL
                     SELECT prs.roster_id,
                            COALESCE(MAX(prs.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown'),
-                           COALESCE(MAX(prs.position), MAX(p.position), '-'),
+                           COALESCE(MAX(p.position), '-'),
                            COALESCE(MAX(t.team_name), 'FA'),
                            0, SUM(COALESCE(prs.rush_tds, 0)), 0
                     FROM player_rushing_stats prs
@@ -693,7 +693,7 @@ class Database:
                     UNION ALL
                     SELECT prec.roster_id,
                            COALESCE(MAX(prec.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown'),
-                           COALESCE(MAX(prec.position), MAX(p.position), '-'),
+                           COALESCE(MAX(p.position), '-'),
                            COALESCE(MAX(t.team_name), 'FA'),
                            0, 0, SUM(COALESCE(prec.rec_tds, 0))
                     FROM player_receiving_stats prec
