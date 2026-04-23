@@ -640,7 +640,7 @@ class Database:
                     SUM(COALESCE(pds.def_tackles, 0)) AS tackles,
                     SUM(COALESCE(pds.def_sacks, 0)) AS sacks,
                     SUM(COALESCE(pds.def_ints, 0)) AS defensive_ints,
-                    0 AS fumbles_forced
+                    0 AS fumbles_forced -- not present in production defensive stat table
                 FROM player_defense_stats pds
                 JOIN team t ON t.id = pds.team_id
                 LEFT JOIN players p ON p.roster_id = pds.roster_id
@@ -659,9 +659,9 @@ class Database:
                 """
                 SELECT
                     roster_id,
-                    player_name,
-                    position,
-                    team_name,
+                    COALESCE(MAX(player_name), 'Unknown') AS player_name,
+                    COALESCE(MAX(position), '-') AS position,
+                    COALESCE(MAX(team_name), 'FA') AS team_name,
                     SUM(pass_tds) AS pass_tds,
                     SUM(rush_tds) AS rush_tds,
                     SUM(rec_tds) AS rec_tds,
@@ -702,7 +702,7 @@ class Database:
                     WHERE t.league_id = %s
                     GROUP BY prec.roster_id
                 ) combined
-                GROUP BY roster_id, player_name, position, team_name
+                GROUP BY roster_id
                 ORDER BY total_tds DESC, player_name ASC
                 LIMIT 5
                 """,
@@ -746,12 +746,13 @@ class Database:
                 """
                 SELECT COALESCE(MAX(p.full_name), 'Unknown') AS player_name,
                        SUM(COALESCE(pds.def_sacks, 0)) AS sacks,
-                       SUM(COALESCE(pds.def_ints, 0)) AS defensive_ints
+                       SUM(COALESCE(pds.def_ints, 0)) AS defensive_ints,
+                       SUM(COALESCE(pds.def_sacks, 0) + COALESCE(pds.def_ints, 0)) AS defensive_score
                 FROM player_defense_stats pds
                 LEFT JOIN players p ON p.roster_id = pds.roster_id
                 WHERE pds.team_id = %s
                 GROUP BY pds.roster_id
-                ORDER BY (SUM(COALESCE(pds.def_sacks, 0)) + SUM(COALESCE(pds.def_ints, 0))) DESC
+                ORDER BY defensive_score DESC
                 LIMIT 1
                 """,
                 (team_id,),
@@ -871,7 +872,7 @@ class Database:
                        COALESCE(pds.tackles, 0) AS tackles,
                        COALESCE(pds.sacks, 0) AS sacks,
                        COALESCE(pds.defensive_ints, 0) AS defensive_ints,
-                       0 AS fumbles_forced
+                       0 AS fumbles_forced -- not present in production defensive stat table
                 FROM players p
                 JOIN team t
                   ON t.id = p.team_id
