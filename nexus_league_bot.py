@@ -563,15 +563,15 @@ class Database:
                 """
                 SELECT
                     pps.roster_id,
-                    COALESCE(MAX(p.full_name), 'Unknown') AS player_name,
-                    COALESCE(MAX(p.position), '-') AS position,
+                    COALESCE(MAX(pps.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
+                    COALESCE(MAX(pps.position), MAX(p.position), '-') AS position,
                     COALESCE(MAX(t.team_name), 'FA') AS team_name,
                     SUM(COALESCE(pps.pass_yds, 0)) AS pass_yards,
                     SUM(COALESCE(pps.pass_tds, 0)) AS pass_tds,
                     SUM(COALESCE(pps.pass_ints, 0)) AS interceptions
                 FROM player_passing_stats pps
                 JOIN team t ON t.id = pps.team_id
-                LEFT JOIN players p ON p.roster_id = pps.roster_id
+                LEFT JOIN player p ON p.id = pps.roster_id
                 WHERE t.league_id = %s
                 GROUP BY pps.roster_id
                 ORDER BY pass_yards DESC, player_name ASC
@@ -587,14 +587,14 @@ class Database:
                 """
                 SELECT
                     prs.roster_id,
-                    COALESCE(MAX(p.full_name), 'Unknown') AS player_name,
-                    COALESCE(MAX(p.position), '-') AS position,
+                    COALESCE(MAX(prs.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
+                    COALESCE(MAX(prs.position), MAX(p.position), '-') AS position,
                     COALESCE(MAX(t.team_name), 'FA') AS team_name,
                     SUM(COALESCE(prs.rush_yds, 0)) AS rush_yards,
                     SUM(COALESCE(prs.rush_tds, 0)) AS rush_tds
                 FROM player_rushing_stats prs
                 JOIN team t ON t.id = prs.team_id
-                LEFT JOIN players p ON p.roster_id = prs.roster_id
+                LEFT JOIN player p ON p.id = prs.roster_id
                 WHERE t.league_id = %s
                 GROUP BY prs.roster_id
                 ORDER BY rush_yards DESC, player_name ASC
@@ -610,15 +610,15 @@ class Database:
                 """
                 SELECT
                     prs.roster_id,
-                    COALESCE(MAX(p.full_name), 'Unknown') AS player_name,
-                    COALESCE(MAX(p.position), '-') AS position,
+                    COALESCE(MAX(prs.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
+                    COALESCE(MAX(prs.position), MAX(p.position), '-') AS position,
                     COALESCE(MAX(t.team_name), 'FA') AS team_name,
                     SUM(COALESCE(prs.rec_yds, 0)) AS rec_yards,
                     SUM(COALESCE(prs.rec_tds, 0)) AS rec_tds,
                     SUM(COALESCE(prs.receptions, 0)) AS receptions
                 FROM player_receiving_stats prs
                 JOIN team t ON t.id = prs.team_id
-                LEFT JOIN players p ON p.roster_id = prs.roster_id
+                LEFT JOIN player p ON p.id = prs.roster_id
                 WHERE t.league_id = %s
                 GROUP BY prs.roster_id
                 ORDER BY rec_yards DESC, player_name ASC
@@ -634,8 +634,8 @@ class Database:
                 """
                 SELECT
                     pds.roster_id,
-                    COALESCE(MAX(p.full_name), 'Unknown') AS player_name,
-                    COALESCE(MAX(p.position), '-') AS position,
+                    COALESCE(MAX(pds.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
+                    COALESCE(MAX(pds.position), MAX(p.position), '-') AS position,
                     COALESCE(MAX(t.team_name), 'FA') AS team_name,
                     SUM(COALESCE(pds.def_tackles, 0)) AS tackles,
                     SUM(COALESCE(pds.def_sacks, 0)) AS sacks,
@@ -643,7 +643,7 @@ class Database:
                     0 AS fumbles_forced -- not present in production defensive stat table
                 FROM player_defense_stats pds
                 JOIN team t ON t.id = pds.team_id
-                LEFT JOIN players p ON p.roster_id = pds.roster_id
+                LEFT JOIN player p ON p.id = pds.roster_id
                 WHERE t.league_id = %s
                 GROUP BY pds.roster_id
                 ORDER BY tackles DESC, player_name ASC
@@ -668,37 +668,37 @@ class Database:
                     SUM(pass_tds + rush_tds + rec_tds) AS total_tds
                 FROM (
                     SELECT pps.roster_id,
-                           COALESCE(MAX(p.full_name), 'Unknown') AS player_name,
-                           COALESCE(MAX(p.position), '-') AS position,
+                           COALESCE(MAX(pps.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
+                           COALESCE(MAX(pps.position), MAX(p.position), '-') AS position,
                            COALESCE(MAX(t.team_name), 'FA') AS team_name,
                            SUM(COALESCE(pps.pass_tds, 0)) AS pass_tds,
                            0 AS rush_tds,
                            0 AS rec_tds
                     FROM player_passing_stats pps
                     JOIN team t ON t.id = pps.team_id
-                    LEFT JOIN players p ON p.roster_id = pps.roster_id
+                    LEFT JOIN player p ON p.id = pps.roster_id
                     WHERE t.league_id = %s
                     GROUP BY pps.roster_id
                     UNION ALL
                     SELECT prs.roster_id,
-                           COALESCE(MAX(p.full_name), 'Unknown'),
-                           COALESCE(MAX(p.position), '-'),
+                           COALESCE(MAX(prs.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown'),
+                           COALESCE(MAX(prs.position), MAX(p.position), '-'),
                            COALESCE(MAX(t.team_name), 'FA'),
                            0, SUM(COALESCE(prs.rush_tds, 0)), 0
                     FROM player_rushing_stats prs
                     JOIN team t ON t.id = prs.team_id
-                    LEFT JOIN players p ON p.roster_id = prs.roster_id
+                    LEFT JOIN player p ON p.id = prs.roster_id
                     WHERE t.league_id = %s
                     GROUP BY prs.roster_id
                     UNION ALL
                     SELECT prec.roster_id,
-                           COALESCE(MAX(p.full_name), 'Unknown'),
-                           COALESCE(MAX(p.position), '-'),
+                           COALESCE(MAX(prec.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown'),
+                           COALESCE(MAX(prec.position), MAX(p.position), '-'),
                            COALESCE(MAX(t.team_name), 'FA'),
                            0, 0, SUM(COALESCE(prec.rec_tds, 0))
                     FROM player_receiving_stats prec
                     JOIN team t ON t.id = prec.team_id
-                    LEFT JOIN players p ON p.roster_id = prec.roster_id
+                    LEFT JOIN player p ON p.id = prec.roster_id
                     WHERE t.league_id = %s
                     GROUP BY prec.roster_id
                 ) combined
@@ -714,11 +714,11 @@ class Database:
         with self.conn() as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT COALESCE(MAX(p.full_name), 'Unknown') AS player_name,
+                SELECT COALESCE(MAX(pps.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
                        SUM(COALESCE(pps.pass_yds, 0)) AS pass_yards,
                        SUM(COALESCE(pps.pass_tds, 0)) AS pass_tds
                 FROM player_passing_stats pps
-                LEFT JOIN players p ON p.roster_id = pps.roster_id
+                LEFT JOIN player p ON p.id = pps.roster_id
                 WHERE pps.team_id = %s
                 GROUP BY pps.roster_id
                 ORDER BY pass_yards DESC
@@ -729,11 +729,11 @@ class Database:
             passing = cur.fetchone() or {}
             cur.execute(
                 """
-                SELECT COALESCE(MAX(p.full_name), 'Unknown') AS player_name,
+                SELECT COALESCE(MAX(prs.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
                        SUM(COALESCE(prs.rush_yds, 0)) AS rush_yards,
                        SUM(COALESCE(prs.rush_tds, 0)) AS rush_tds
                 FROM player_rushing_stats prs
-                LEFT JOIN players p ON p.roster_id = prs.roster_id
+                LEFT JOIN player p ON p.id = prs.roster_id
                 WHERE prs.team_id = %s
                 GROUP BY prs.roster_id
                 ORDER BY rush_yards DESC
@@ -744,12 +744,12 @@ class Database:
             rushing = cur.fetchone() or {}
             cur.execute(
                 """
-                SELECT COALESCE(MAX(p.full_name), 'Unknown') AS player_name,
+                SELECT COALESCE(MAX(pds.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
                        SUM(COALESCE(pds.def_sacks, 0)) AS sacks,
                        SUM(COALESCE(pds.def_ints, 0)) AS defensive_ints,
                        SUM(COALESCE(pds.def_sacks, 0) + COALESCE(pds.def_ints, 0)) AS defensive_score
                 FROM player_defense_stats pds
-                LEFT JOIN players p ON p.roster_id = pds.roster_id
+                LEFT JOIN player p ON p.id = pds.roster_id
                 WHERE pds.team_id = %s
                 GROUP BY pds.roster_id
                 ORDER BY defensive_score DESC
@@ -856,8 +856,8 @@ class Database:
         with self.conn() as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT p.roster_id,
-                       p.full_name,
+                SELECT p.id AS roster_id,
+                       p.first_name || ' ' || p.last_name AS full_name,
                        p.position,
                        p.overall_rating,
                        COALESCE(t.team_name, 'FA') AS team_name,
@@ -873,7 +873,7 @@ class Database:
                        COALESCE(pds.sacks, 0) AS sacks,
                        COALESCE(pds.defensive_ints, 0) AS defensive_ints,
                        0 AS fumbles_forced -- not present in production defensive stat table
-                FROM players p
+                FROM player p
                 JOIN team t
                   ON t.id = p.team_id
                 LEFT JOIN (
@@ -885,7 +885,7 @@ class Database:
                     FROM player_passing_stats
                     GROUP BY roster_id, team_id
                 ) pps
-                  ON pps.roster_id = p.roster_id
+                  ON pps.roster_id = p.id
                  AND pps.team_id = p.team_id
                 LEFT JOIN (
                     SELECT roster_id,
@@ -895,7 +895,7 @@ class Database:
                     FROM player_rushing_stats
                     GROUP BY roster_id, team_id
                 ) prs
-                  ON prs.roster_id = p.roster_id
+                  ON prs.roster_id = p.id
                  AND prs.team_id = p.team_id
                 LEFT JOIN (
                     SELECT roster_id,
@@ -906,7 +906,7 @@ class Database:
                     FROM player_receiving_stats
                     GROUP BY roster_id, team_id
                 ) prc
-                  ON prc.roster_id = p.roster_id
+                  ON prc.roster_id = p.id
                  AND prc.team_id = p.team_id
                 LEFT JOIN (
                     SELECT roster_id,
@@ -917,11 +917,11 @@ class Database:
                     FROM player_defense_stats
                     GROUP BY roster_id, team_id
                 ) pds
-                  ON pds.roster_id = p.roster_id
+                  ON pds.roster_id = p.id
                  AND pds.team_id = p.team_id
                 WHERE t.league_id = %s
-                  AND p.full_name ILIKE %s
-                ORDER BY p.full_name ASC
+                  AND (p.first_name || ' ' || p.last_name) ILIKE %s
+                ORDER BY p.first_name || ' ' || p.last_name ASC
                 LIMIT 5
                 """,
                 (league_id, f"%{name_query}%"),
