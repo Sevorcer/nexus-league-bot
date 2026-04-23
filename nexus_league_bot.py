@@ -34,6 +34,7 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 DEFAULT_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_API_KEY_TEMPLATE = os.getenv("OPENAI_API_KEY_TEMPLATE", "").strip()
 AUTO_POST_MATCHUP_PREVIEWS = os.getenv("AUTO_POST_MATCHUP_PREVIEWS", "true").lower() in {"1", "true", "yes", "on"}
+HEADLINE_MAX_OUTPUT_TOKENS = 260
 
 _WEEKS_MEMORY: dict[str, dict[int, list[str]]] = {
     "angles": defaultdict(list),
@@ -2761,7 +2762,13 @@ class NexusLeagueBot(discord.Client):
         cfg = await asyncio.to_thread(self.db.get_guild_config, guild_id) if guild_id else {}
         if resolve_openai_api_key(cfg, guild_id):
             try:
-                ai_text = await asyncio.to_thread(call_openai_text, build_headline_prompt(facts), 260, cfg, guild_id)
+                ai_text = await asyncio.to_thread(
+                    call_openai_text,
+                    build_headline_prompt(facts),
+                    HEADLINE_MAX_OUTPUT_TOKENS,
+                    cfg,
+                    guild_id,
+                )
                 cleaned = "\n".join(line.strip() for line in ai_text.splitlines() if line.strip())
                 if cleaned:
                     headline_text = cleaned
