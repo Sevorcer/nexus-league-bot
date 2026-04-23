@@ -704,7 +704,7 @@ class Database:
                        SUM(COALESCE(ps.pass_yards, 0)) AS pass_yards,
                        SUM(COALESCE(ps.pass_tds, 0)) AS pass_tds
                 FROM playerstats ps
-                LEFT JOIN player p ON p.id = ps.player_id
+                JOIN player p ON p.id = ps.player_id
                 WHERE p.team_id = %s AND ps.league_id = %s
                 GROUP BY ps.player_id
                 ORDER BY pass_yards DESC
@@ -719,7 +719,7 @@ class Database:
                        SUM(COALESCE(ps.rush_yards, 0)) AS rush_yards,
                        SUM(COALESCE(ps.rush_tds, 0)) AS rush_tds
                 FROM playerstats ps
-                LEFT JOIN player p ON p.id = ps.player_id
+                JOIN player p ON p.id = ps.player_id
                 WHERE p.team_id = %s AND ps.league_id = %s
                 GROUP BY ps.player_id
                 ORDER BY rush_yards DESC
@@ -735,7 +735,7 @@ class Database:
                        SUM(COALESCE(ps.defensive_ints, 0)) AS defensive_ints,
                        SUM(COALESCE(ps.sacks, 0) + COALESCE(ps.defensive_ints, 0)) AS defensive_score
                 FROM playerstats ps
-                LEFT JOIN player p ON p.id = ps.player_id
+                JOIN player p ON p.id = ps.player_id
                 WHERE p.team_id = %s AND ps.league_id = %s
                 GROUP BY ps.player_id
                 ORDER BY defensive_score DESC
