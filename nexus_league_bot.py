@@ -525,40 +525,13 @@ class Database:
                        t.ties,
                        t.overall_rating as team_ovr,
                        COALESCE(t.wins::float / NULLIF((t.wins + t.losses + t.ties), 0), 0) as win_pct,
-                       COALESCE(st.pts_for, score.pts_for, 0)::int as pts_for,
-                       COALESCE(st.pts_against, score.pts_against, 0)::int as pts_against,
-                       0::int as turnover_diff, -- not available in current schema
+                       COALESCE(st.pts_for, 0)::int as pts_for,
+                       COALESCE(st.pts_against, 0)::int as pts_against,
+                       COALESCE(st.turnover_diff, 0)::int as turnover_diff,
                        COALESCE(st.seed, 0)::int as seed
                 FROM team t
                 LEFT JOIN standings st
                   ON st.team_id = t.id
-                 AND st.league_id = t.league_id
-                LEFT JOIN LATERAL (
-                    SELECT COALESCE(
-                               SUM(
-                                   CASE
-                                       WHEN s.home_team_id = t.id THEN COALESCE(s.home_score, 0)
-                                       WHEN s.away_team_id = t.id THEN COALESCE(s.away_score, 0)
-                                       ELSE 0
-                                   END
-                               ),
-                               0
-                           )::int as pts_for,
-                           COALESCE(
-                               SUM(
-                                   CASE
-                                       WHEN s.home_team_id = t.id THEN COALESCE(s.away_score, 0)
-                                       WHEN s.away_team_id = t.id THEN COALESCE(s.home_score, 0)
-                                       ELSE 0
-                                   END
-                               ),
-                               0
-                           )::int as pts_against
-                    FROM schedule s
-                    WHERE s.league_id = t.league_id
-                      AND s.is_complete = TRUE
-                      AND (s.home_team_id = t.id OR s.away_team_id = t.id)
-                ) score ON TRUE
                 WHERE t.league_id = %s
                   AND t.id = %s
                 LIMIT 1
@@ -780,17 +753,19 @@ class Database:
             cur.execute(
                 """
                 SELECT t.team_name,
-                       COALESCE(s.division_name, t.division, 'Unknown') AS division_name,
+                       COALESCE(t.division, 'Unknown') AS division_name,
                        s.wins,
                        s.losses,
                        s.ties,
-                       s.seed
+                       s.seed,
+                       s.pts_for,
+                       s.pts_against,
+                       s.win_pct
                 FROM standings s
                 JOIN team t
                   ON t.id = s.team_id
-                 AND t.league_id = s.league_id
-                WHERE s.league_id = %s
-                ORDER BY s.wins DESC, s.losses ASC, s.ties DESC, t.team_name ASC
+                WHERE t.league_id = %s
+                ORDER BY s.wins DESC, s.losses ASC
                 """,
                 (league_id,),
             )
