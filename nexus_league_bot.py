@@ -2326,6 +2326,8 @@ class NexusLeagueBot(discord.Client):
                 guild_obj = discord.Object(id=guild_id)
                 self.tree.copy_global_to(guild=guild_obj)
                 await self.tree.sync(guild=guild_obj)
+            self.tree.clear_commands(guild=None)
+            await self.tree.sync()
         else:
             await self.tree.sync()
 
@@ -2711,9 +2713,11 @@ class NexusLeagueBot(discord.Client):
         if league_id is None:
             return
 
+        await interaction.response.defer(ephemeral=post_to_channel)
+
         standings = await asyncio.to_thread(self.db.fetch_standings, league_id)
         if not standings:
-            await interaction.response.send_message("No standings found.", ephemeral=True)
+            await interaction.followup.send("No standings found.", ephemeral=True)
             return
 
         passing = await asyncio.to_thread(self.db.fetch_passing_leaders, league_id)
@@ -2787,21 +2791,21 @@ class NexusLeagueBot(discord.Client):
         embed.set_footer(text="AI-assisted headlines" if used_ai else "Template headlines")
 
         if not post_to_channel:
-            await interaction.response.send_message(embed=embed)
+            await interaction.followup.send(embed=embed)
             return
 
         if not interaction.guild:
-            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+            await interaction.followup.send("This command can only be used in a server.", ephemeral=True)
             return
 
         leaders_channel_id = int(cfg.get("leaders_channel_id") or 0)
         channel = interaction.guild.get_channel(leaders_channel_id) if leaders_channel_id else None
         if not isinstance(channel, discord.TextChannel):
-            await interaction.response.send_message("Leaders channel is not configured. Use `/setup channels` first.", ephemeral=True)
+            await interaction.followup.send("Leaders channel is not configured. Use `/setup channels` first.", ephemeral=True)
             return
 
         await channel.send(embed=embed)
-        await interaction.response.send_message(f"Posted headlines to {channel.mention}.", ephemeral=True)
+        await interaction.followup.send(f"Posted headlines to {channel.mention}.", ephemeral=True)
 
     async def send_player_search(self, interaction: discord.Interaction, name_query: str) -> None:
         league_id = await self.get_league_id(interaction)
