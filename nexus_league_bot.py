@@ -525,12 +525,12 @@ class Database:
                        t.ties,
                        t.overall_rating as team_ovr,
                        COALESCE(t.wins::float / NULLIF((t.wins + t.losses + t.ties), 0), 0) as win_pct,
-                       COALESCE(score.pts_for, 0)::int as pts_for,
-                       COALESCE(score.pts_against, 0)::int as pts_against,
+                       COALESCE(st.pts_for, score.pts_for, 0)::int as pts_for,
+                       COALESCE(st.pts_against, score.pts_against, 0)::int as pts_against,
                        0::int as turnover_diff, -- not available in current schema
                        COALESCE(st.seed, 0)::int as seed
                 FROM team t
-                LEFT JOIN standing st
+                LEFT JOIN standings st
                   ON st.team_id = t.id
                  AND st.league_id = t.league_id
                 LEFT JOIN LATERAL (
@@ -785,7 +785,7 @@ class Database:
                        s.losses,
                        s.ties,
                        s.seed
-                FROM standing s
+                FROM standings s
                 JOIN team t
                   ON t.id = s.team_id
                  AND t.league_id = s.league_id
