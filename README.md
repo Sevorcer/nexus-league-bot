@@ -14,7 +14,7 @@ Discord bot built for the `nexusexporter-clean` PostgreSQL schema with strict pe
 
 - `DISCORD_BOT_TOKEN` (required)
 - `DATABASE_URL` (required)
-- `GUILD_IDS` (optional, comma-separated guild IDs for instant startup command sync; bot also globally syncs and syncs on new guild joins)
+- `GUILD_IDS` (optional, comma-separated guild IDs for instant startup command sync; when set, startup sync is guild-only, otherwise startup sync is global)
 
 ## Local Run
 
@@ -47,14 +47,15 @@ python nexus_league_bot.py
 - `/team info team:<team_name>`
 - `/schedule [week:<int>]`
 - `/scores`
+- `/headline`
 - `/player search name:<string>`
 - `/trade coach_one:<member> coach_two:<member> team_one:<string> team_two:<string> team_one_gets:<string> team_two_gets:<string> [notes]`
 - `/tradehistory [limit:<int>]`
 - `/forcetrade trade_id:<int> decision:<approve|deny> [reason]`
 - `/post_weekly_news week:<int> [phase] [gotw_pick:'Away @ Home'] [channel]`
+- `/post headline`
 - `/create_weekly_channels week:<int> [category_name]`
 - `/xprank [user]`
-- `/xplevel [user]`
 - `/xpleaderboard`
 - `/createbounty title:<string> reward:<number> description:<string>`
 - `/bounties`
