@@ -1524,7 +1524,7 @@ def find_closest_division_race(standings: list[dict[str, Any]]) -> str:
     for row in standings:
         grouped[safe_text(row.get("division_name"), "Unknown")].append(row)
 
-    best_text = "Division races are still taking shape."
+    fallback_text = "Division races are still taking shape."
     closest_gap: float | None = None
     for division, rows in grouped.items():
         ordered = sorted(
@@ -1543,12 +1543,12 @@ def find_closest_division_race(standings: list[dict[str, Any]]) -> str:
         gap = ((safe_int(leader.get("wins")) - safe_int(chaser.get("wins"))) + (safe_int(chaser.get("losses")) - safe_int(leader.get("losses")))) / 2
         if closest_gap is None or gap < closest_gap:
             closest_gap = gap
-            best_text = (
+            fallback_text = (
                 f"The closest division race is {division}: {safe_text(leader.get('team_name'))} "
                 f"({wins_losses_ties_text(leader)}) vs {safe_text(chaser.get('team_name'))} "
                 f"({wins_losses_ties_text(chaser)}), separated by {gap:.1f} game(s)."
             )
-    return best_text
+    return fallback_text
 
 
 def build_headline_prompt(facts: dict[str, Any]) -> str:
@@ -2758,7 +2758,8 @@ class NexusLeagueBot(discord.Client):
         used_ai = False
 
         guild_id = interaction.guild.id if interaction.guild else None
-        cfg = await asyncio.to_thread(self.db.get_guild_config, guild_id) if guild_id else {}
+        cfg = (await asyncio.to_thread(self.db.get_guild_config, guild_id)) if guild_id else {}
+        cfg = cfg or {}
         if resolve_openai_api_key(cfg, guild_id):
             try:
                 ai_text = await asyncio.to_thread(
@@ -2768,7 +2769,7 @@ class NexusLeagueBot(discord.Client):
                     cfg,
                     guild_id,
                 )
-                cleaned = "\n".join(line.strip() for line in ai_text.splitlines() if line.strip())
+                cleaned = "\n".join(line for line in (raw.strip() for raw in ai_text.splitlines()) if line)
                 if cleaned:
                     headline_text = cleaned
                     used_ai = True
@@ -2793,7 +2794,7 @@ class NexusLeagueBot(discord.Client):
             await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
             return
 
-        leaders_channel_id = int((cfg or {}).get("leaders_channel_id") or 0)
+        leaders_channel_id = int(cfg.get("leaders_channel_id") or 0)
         channel = interaction.guild.get_channel(leaders_channel_id) if leaders_channel_id else None
         if not isinstance(channel, discord.TextChannel):
             await interaction.response.send_message("Leaders channel is not configured. Use `/setup channels` first.", ephemeral=True)
