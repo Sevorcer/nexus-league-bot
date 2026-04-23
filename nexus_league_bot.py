@@ -691,7 +691,7 @@ class Database:
                     WHERE t.league_id = %s
                     GROUP BY prs.roster_id
                     UNION ALL
-                    SELECT ps.player_id,
+                    SELECT ps.player_id AS roster_id,
                            COALESCE(MAX(p.first_name || ' ' || p.last_name), 'Unknown'),
                            COALESCE(MAX(p.position), '-'),
                            COALESCE(MAX(t.team_name), 'FA'),
