@@ -2712,6 +2712,7 @@ class NexusLeagueBot(discord.Client):
         league_id = await self.get_league_id(interaction)
         if league_id is None:
             return
+        await interaction.response.defer(ephemeral=post_to_channel)
 
         await interaction.response.defer(ephemeral=post_to_channel)
 
