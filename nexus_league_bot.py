@@ -562,18 +562,18 @@ class Database:
             cur.execute(
                 """
                 SELECT
-                    pps.roster_id,
-                    COALESCE(MAX(pps.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
+                    ps.player_id AS roster_id,
+                    COALESCE(MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
                     COALESCE(MAX(p.position), '-') AS position,
                     COALESCE(MAX(t.team_name), 'FA') AS team_name,
-                    SUM(COALESCE(pps.pass_yds, 0)) AS pass_yards,
-                    SUM(COALESCE(pps.pass_tds, 0)) AS pass_tds,
-                    SUM(COALESCE(pps.pass_ints, 0)) AS interceptions
-                FROM player_passing_stats pps
-                JOIN team t ON t.id = pps.team_id
-                LEFT JOIN player p ON p.id = pps.roster_id
-                WHERE t.league_id = %s
-                GROUP BY pps.roster_id
+                    SUM(COALESCE(ps.pass_yards, 0)) AS pass_yards,
+                    SUM(COALESCE(ps.pass_tds, 0)) AS pass_tds,
+                    SUM(COALESCE(ps.interceptions, 0)) AS interceptions
+                FROM playerstats ps
+                LEFT JOIN player p ON p.id = ps.player_id
+                LEFT JOIN team t ON t.id = p.team_id
+                WHERE ps.league_id = %s
+                GROUP BY ps.player_id
                 ORDER BY pass_yards DESC, player_name ASC
                 LIMIT 5
                 """,
@@ -586,17 +586,17 @@ class Database:
             cur.execute(
                 """
                 SELECT
-                    prs.roster_id,
-                    COALESCE(MAX(prs.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
+                    ps.player_id AS roster_id,
+                    COALESCE(MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
                     COALESCE(MAX(p.position), '-') AS position,
                     COALESCE(MAX(t.team_name), 'FA') AS team_name,
-                    SUM(COALESCE(prs.rush_yds, 0)) AS rush_yards,
-                    SUM(COALESCE(prs.rush_tds, 0)) AS rush_tds
-                FROM player_rushing_stats prs
-                JOIN team t ON t.id = prs.team_id
-                LEFT JOIN player p ON p.id = prs.roster_id
-                WHERE t.league_id = %s
-                GROUP BY prs.roster_id
+                    SUM(COALESCE(ps.rush_yards, 0)) AS rush_yards,
+                    SUM(COALESCE(ps.rush_tds, 0)) AS rush_tds
+                FROM playerstats ps
+                LEFT JOIN player p ON p.id = ps.player_id
+                LEFT JOIN team t ON t.id = p.team_id
+                WHERE ps.league_id = %s
+                GROUP BY ps.player_id
                 ORDER BY rush_yards DESC, player_name ASC
                 LIMIT 5
                 """,
@@ -633,19 +633,19 @@ class Database:
             cur.execute(
                 """
                 SELECT
-                    pds.roster_id,
-                    COALESCE(MAX(pds.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
+                    ps.player_id AS roster_id,
+                    COALESCE(MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
                     COALESCE(MAX(p.position), '-') AS position,
                     COALESCE(MAX(t.team_name), 'FA') AS team_name,
-                    SUM(COALESCE(pds.tackles, 0)) AS tackles,
-                    SUM(COALESCE(pds.def_sacks, 0)) AS sacks,
-                    SUM(COALESCE(pds.def_ints, 0)) AS defensive_ints,
-                    0 AS fumbles_forced -- not present in production defensive stat table
-                FROM player_defense_stats pds
-                JOIN team t ON t.id = pds.team_id
-                LEFT JOIN player p ON p.id = pds.roster_id
-                WHERE t.league_id = %s
-                GROUP BY pds.roster_id
+                    SUM(COALESCE(ps.tackles, 0)) AS tackles,
+                    SUM(COALESCE(ps.sacks, 0)) AS sacks,
+                    SUM(COALESCE(ps.defensive_ints, 0)) AS defensive_ints,
+                    SUM(COALESCE(ps.fumbles_forced, 0)) AS fumbles_forced
+                FROM playerstats ps
+                LEFT JOIN player p ON p.id = ps.player_id
+                LEFT JOIN team t ON t.id = p.team_id
+                WHERE ps.league_id = %s
+                GROUP BY ps.player_id
                 ORDER BY tackles DESC, player_name ASC
                 LIMIT 5
                 """,
@@ -667,35 +667,13 @@ class Database:
                     SUM(rec_tds) AS rec_tds,
                     SUM(pass_tds + rush_tds + rec_tds) AS total_tds
                 FROM (
-                    SELECT pps.roster_id,
-                           COALESCE(MAX(pps.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
+                    SELECT ps.player_id AS roster_id,
+                           COALESCE(MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
                            COALESCE(MAX(p.position), '-') AS position,
                            COALESCE(MAX(t.team_name), 'FA') AS team_name,
-                           SUM(COALESCE(pps.pass_tds, 0)) AS pass_tds,
-                           0 AS rush_tds,
-                           0 AS rec_tds
-                    FROM player_passing_stats pps
-                    JOIN team t ON t.id = pps.team_id
-                    LEFT JOIN player p ON p.id = pps.roster_id
-                    WHERE t.league_id = %s
-                    GROUP BY pps.roster_id
-                    UNION ALL
-                    SELECT prs.roster_id,
-                           COALESCE(MAX(prs.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown'),
-                           COALESCE(MAX(p.position), '-'),
-                           COALESCE(MAX(t.team_name), 'FA'),
-                           0, SUM(COALESCE(prs.rush_tds, 0)), 0
-                    FROM player_rushing_stats prs
-                    JOIN team t ON t.id = prs.team_id
-                    LEFT JOIN player p ON p.id = prs.roster_id
-                    WHERE t.league_id = %s
-                    GROUP BY prs.roster_id
-                    UNION ALL
-                    SELECT ps.player_id AS roster_id,
-                           COALESCE(MAX(p.first_name || ' ' || p.last_name), 'Unknown'),
-                           COALESCE(MAX(p.position), '-'),
-                           COALESCE(MAX(t.team_name), 'FA'),
-                           0, 0, SUM(COALESCE(ps.rec_tds, 0))
+                           SUM(COALESCE(ps.pass_tds, 0)) AS pass_tds,
+                           SUM(COALESCE(ps.rush_tds, 0)) AS rush_tds,
+                           SUM(COALESCE(ps.rec_tds, 0)) AS rec_tds
                     FROM playerstats ps
                     LEFT JOIN player p ON p.id = ps.player_id
                     LEFT JOIN team t ON t.id = p.team_id
@@ -706,7 +684,7 @@ class Database:
                 ORDER BY total_tds DESC, player_name ASC
                 LIMIT 5
                 """,
-                (league_id, league_id, league_id),
+                (league_id,),
             )
             return cur.fetchall()
 
@@ -714,48 +692,48 @@ class Database:
         with self.conn() as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT COALESCE(MAX(pps.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
-                       SUM(COALESCE(pps.pass_yds, 0)) AS pass_yards,
-                       SUM(COALESCE(pps.pass_tds, 0)) AS pass_tds
-                FROM player_passing_stats pps
-                LEFT JOIN player p ON p.id = pps.roster_id
-                WHERE pps.team_id = %s
-                GROUP BY pps.roster_id
+                SELECT COALESCE(MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
+                       SUM(COALESCE(ps.pass_yards, 0)) AS pass_yards,
+                       SUM(COALESCE(ps.pass_tds, 0)) AS pass_tds
+                FROM playerstats ps
+                LEFT JOIN player p ON p.id = ps.player_id
+                WHERE p.team_id = %s AND ps.league_id = %s
+                GROUP BY ps.player_id
                 ORDER BY pass_yards DESC
                 LIMIT 1
                 """,
-                (team_id,),
+                (team_id, league_id),
             )
             passing = cur.fetchone() or {}
             cur.execute(
                 """
-                SELECT COALESCE(MAX(prs.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
-                       SUM(COALESCE(prs.rush_yds, 0)) AS rush_yards,
-                       SUM(COALESCE(prs.rush_tds, 0)) AS rush_tds
-                FROM player_rushing_stats prs
-                LEFT JOIN player p ON p.id = prs.roster_id
-                WHERE prs.team_id = %s
-                GROUP BY prs.roster_id
+                SELECT COALESCE(MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
+                       SUM(COALESCE(ps.rush_yards, 0)) AS rush_yards,
+                       SUM(COALESCE(ps.rush_tds, 0)) AS rush_tds
+                FROM playerstats ps
+                LEFT JOIN player p ON p.id = ps.player_id
+                WHERE p.team_id = %s AND ps.league_id = %s
+                GROUP BY ps.player_id
                 ORDER BY rush_yards DESC
                 LIMIT 1
                 """,
-                (team_id,),
+                (team_id, league_id),
             )
             rushing = cur.fetchone() or {}
             cur.execute(
                 """
-                SELECT COALESCE(MAX(pds.full_name), MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
-                       SUM(COALESCE(pds.def_sacks, 0)) AS sacks,
-                       SUM(COALESCE(pds.def_ints, 0)) AS defensive_ints,
-                       SUM(COALESCE(pds.def_sacks, 0) + COALESCE(pds.def_ints, 0)) AS defensive_score
-                FROM player_defense_stats pds
-                LEFT JOIN player p ON p.id = pds.roster_id
-                WHERE pds.team_id = %s
-                GROUP BY pds.roster_id
+                SELECT COALESCE(MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
+                       SUM(COALESCE(ps.sacks, 0)) AS sacks,
+                       SUM(COALESCE(ps.defensive_ints, 0)) AS defensive_ints,
+                       SUM(COALESCE(ps.sacks, 0) + COALESCE(ps.defensive_ints, 0)) AS defensive_score
+                FROM playerstats ps
+                LEFT JOIN player p ON p.id = ps.player_id
+                WHERE p.team_id = %s AND ps.league_id = %s
+                GROUP BY ps.player_id
                 ORDER BY defensive_score DESC
                 LIMIT 1
                 """,
-                (team_id,),
+                (team_id, league_id),
             )
             defense = cur.fetchone() or {}
             return {
@@ -1533,6 +1511,63 @@ def template_weekly_news_text(facts: dict[str, Any]) -> str:
     )
 
 
+def find_closest_division_race(standings: list[dict[str, Any]]) -> str:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in standings:
+        grouped[safe_text(row.get("division_name"), "Unknown")].append(row)
+
+    best_text = "Division races are still taking shape."
+    closest_gap: float | None = None
+    for division, rows in grouped.items():
+        ordered = sorted(
+            rows,
+            key=lambda item: (
+                -safe_int(item.get("wins")),
+                safe_int(item.get("losses")),
+                -safe_int(item.get("ties")),
+                safe_text(item.get("team_name")),
+            ),
+        )
+        if len(ordered) < 2:
+            continue
+        leader = ordered[0]
+        chaser = ordered[1]
+        gap = ((safe_int(leader.get("wins")) - safe_int(chaser.get("wins"))) + (safe_int(chaser.get("losses")) - safe_int(leader.get("losses")))) / 2
+        if closest_gap is None or gap < closest_gap:
+            closest_gap = gap
+            best_text = (
+                f"The closest division race is {division}: {safe_text(leader.get('team_name'))} "
+                f"({wins_losses_ties_text(leader)}) vs {safe_text(chaser.get('team_name'))} "
+                f"({wins_losses_ties_text(chaser)}), separated by {gap:.1f} game(s)."
+            )
+    return best_text
+
+
+def build_headline_prompt(facts: dict[str, Any]) -> str:
+    return (
+        "You are writing six short football headline sentences for a Madden franchise Discord league.\n"
+        "Rules:\n"
+        "- Write exactly 6 numbered sentences (1. through 6.).\n"
+        "- Use only provided facts.\n"
+        "- Keep each sentence concise and punchy.\n"
+        "Facts JSON:\n"
+        f"{json.dumps(facts, indent=2, default=str)}"
+    )
+
+
+def template_headline_text(facts: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            f"1. {facts['top_team']} leads the league at {facts['top_record']}, setting the pace in the standings race.",
+            f"2. {facts['closest_race']}",
+            f"3. {facts['passer']} is the top passer with {facts['pass_yards']} yards and {facts['pass_tds']} touchdowns.",
+            f"4. {facts['rusher']} leads all rushers with {facts['rush_yards']} yards on the ground.",
+            f"5. {facts['receiver']} tops the receiving charts with {facts['rec_yards']} yards and {facts['rec_tds']} touchdowns.",
+            f"6. {facts['td_leader']} leads the league in total touchdowns with {facts['total_tds']}. Week {facts['week']} is complete — {facts['scores_summary']}",
+        ]
+    )
+
+
 class TradeReviewView(discord.ui.View):
     def __init__(self, bot: "NexusLeagueBot") -> None:
         super().__init__(timeout=None)
@@ -1862,16 +1897,20 @@ class NexusLeagueBot(discord.Client):
         async def scores(interaction: discord.Interaction) -> None:
             await self.send_recent_scores(interaction)
 
+        @self.tree.command(name="headline", description="Generate league headline summary")
+        async def headline(interaction: discord.Interaction) -> None:
+            await self.send_headline(interaction, post_to_channel=False)
+
+        @post_group.command(name="headline", description="Post league headline summary to leaders channel")
+        async def post_headline(interaction: discord.Interaction) -> None:
+            await self.send_headline(interaction, post_to_channel=True)
+
         @player_group.command(name="search", description="Search for a player by name")
         async def player_search(interaction: discord.Interaction, name: str) -> None:
             await self.send_player_search(interaction, name)
 
         @self.tree.command(name="xprank", description="Show XP rank and progress")
         async def xprank(interaction: discord.Interaction, user: discord.Member | None = None) -> None:
-            await self.send_xp_rank(interaction, user)
-
-        @self.tree.command(name="xplevel", description="Show XP level and progress")
-        async def xplevel(interaction: discord.Interaction, user: discord.Member | None = None) -> None:
             await self.send_xp_rank(interaction, user)
 
         @self.tree.command(name="xpleaderboard", description="Show XP leaderboard")
@@ -2282,13 +2321,13 @@ class NexusLeagueBot(discord.Client):
         self.tree.add_command(player_group)
         self.add_view(TradeReviewView(self))
 
-        await self.tree.sync()
-
         if self.guild_ids:
             for guild_id in self.guild_ids:
                 guild_obj = discord.Object(id=guild_id)
                 self.tree.copy_global_to(guild=guild_obj)
                 await self.tree.sync(guild=guild_obj)
+        else:
+            await self.tree.sync()
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         try:
@@ -2666,6 +2705,94 @@ class NexusLeagueBot(discord.Client):
                 inline=False,
             )
         await interaction.response.send_message(embed=embed)
+
+    async def send_headline(self, interaction: discord.Interaction, post_to_channel: bool) -> None:
+        league_id = await self.get_league_id(interaction)
+        if league_id is None:
+            return
+
+        standings = await asyncio.to_thread(self.db.fetch_standings, league_id)
+        if not standings:
+            await interaction.response.send_message("No standings found.", ephemeral=True)
+            return
+
+        passing = await asyncio.to_thread(self.db.fetch_passing_leaders, league_id)
+        rushing = await asyncio.to_thread(self.db.fetch_rushing_leaders, league_id)
+        receiving = await asyncio.to_thread(self.db.fetch_receiving_leaders, league_id)
+        touchdowns = await asyncio.to_thread(self.db.fetch_touchdown_leaders, league_id)
+        week = await asyncio.to_thread(self.db.latest_completed_week, league_id)
+        recent_games = await asyncio.to_thread(self.db.fetch_schedule_for_week, league_id, week) if week is not None else []
+
+        top_team = standings[0]
+        bottom_team = standings[-1]
+        passer = passing[0] if passing else {}
+        rusher = rushing[0] if rushing else {}
+        receiver = receiving[0] if receiving else {}
+        td_leader = touchdowns[0] if touchdowns else {}
+        scores_summary = (
+            f"{len(recent_games)} game(s) finalized and playoff pressure is rising."
+            if week is not None and recent_games
+            else "results are still coming in across the league."
+        )
+
+        facts = {
+            "top_team": safe_text(top_team.get("team_name"), "The top seed"),
+            "top_record": wins_losses_ties_text(top_team),
+            "bottom_team": safe_text(bottom_team.get("team_name"), "The last-place team"),
+            "bottom_record": wins_losses_ties_text(bottom_team),
+            "closest_race": find_closest_division_race(standings),
+            "passer": player_display_name(passer) if passer else "No passer data",
+            "pass_yards": safe_int(passer.get("pass_yards")) if passer else 0,
+            "pass_tds": safe_int(passer.get("pass_tds")) if passer else 0,
+            "rusher": player_display_name(rusher) if rusher else "No rusher data",
+            "rush_yards": safe_int(rusher.get("rush_yards")) if rusher else 0,
+            "receiver": player_display_name(receiver) if receiver else "No receiver data",
+            "rec_yards": safe_int(receiver.get("rec_yards")) if receiver else 0,
+            "rec_tds": safe_int(receiver.get("rec_tds")) if receiver else 0,
+            "td_leader": player_display_name(td_leader) if td_leader else "No touchdown data",
+            "total_tds": safe_int(td_leader.get("total_tds")) if td_leader else 0,
+            "week": week if week is not None else "N/A",
+            "scores_summary": scores_summary,
+        }
+        headline_text = template_headline_text(facts)
+        used_ai = False
+
+        guild_id = interaction.guild.id if interaction.guild else None
+        cfg = await asyncio.to_thread(self.db.get_guild_config, guild_id) if guild_id else {}
+        if resolve_openai_api_key(cfg, guild_id):
+            try:
+                ai_text = await asyncio.to_thread(call_openai_text, build_headline_prompt(facts), 260, cfg, guild_id)
+                cleaned = "\n".join(line.strip() for line in ai_text.splitlines() if line.strip())
+                if cleaned:
+                    headline_text = cleaned
+                    used_ai = True
+            except Exception as exc:
+                LOGGER.warning("AI headline generation failed for league %s: %s", league_id, exc)
+
+        league_name = await asyncio.to_thread(self.db.get_league_name, league_id)
+        embed = discord.Embed(
+            title=f"🗞️ {league_name} Headlines",
+            description=headline_text,
+            color=discord.Color.gold(),
+        )
+        embed.set_footer(text="AI-assisted headlines" if used_ai else "Template headlines")
+
+        if not post_to_channel:
+            await interaction.response.send_message(embed=embed)
+            return
+
+        if not interaction.guild:
+            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+            return
+
+        leaders_channel_id = int((cfg or {}).get("leaders_channel_id") or 0)
+        channel = interaction.guild.get_channel(leaders_channel_id) if leaders_channel_id else None
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.response.send_message("Leaders channel is not configured. Use `/setup channels` first.", ephemeral=True)
+            return
+
+        await channel.send(embed=embed)
+        await interaction.response.send_message(f"Posted headlines to {channel.mention}.", ephemeral=True)
 
     async def send_player_search(self, interaction: discord.Interaction, name_query: str) -> None:
         league_id = await self.get_league_id(interaction)
