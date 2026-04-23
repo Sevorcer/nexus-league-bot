@@ -35,6 +35,13 @@ DEFAULT_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_API_KEY_TEMPLATE = os.getenv("OPENAI_API_KEY_TEMPLATE", "").strip()
 AUTO_POST_MATCHUP_PREVIEWS = os.getenv("AUTO_POST_MATCHUP_PREVIEWS", "true").lower() in {"1", "true", "yes", "on"}
 HEADLINE_MAX_OUTPUT_TOKENS = 260
+HEADLINE_PROMPT_INSTRUCTIONS = (
+    "You are writing six short football headline sentences for a Madden franchise Discord league.\n"
+    "Rules:\n"
+    "- Write exactly 6 numbered sentences (1. through 6.).\n"
+    "- Use only provided facts.\n"
+    "- Keep each sentence concise and punchy.\n"
+)
 
 _WEEKS_MEMORY: dict[str, dict[int, list[str]]] = {
     "angles": defaultdict(list),
@@ -1545,15 +1552,7 @@ def find_closest_division_race(standings: list[dict[str, Any]]) -> str:
 
 
 def build_headline_prompt(facts: dict[str, Any]) -> str:
-    return (
-        "You are writing six short football headline sentences for a Madden franchise Discord league.\n"
-        "Rules:\n"
-        "- Write exactly 6 numbered sentences (1. through 6.).\n"
-        "- Use only provided facts.\n"
-        "- Keep each sentence concise and punchy.\n"
-        "Facts JSON:\n"
-        f"{json.dumps(facts, indent=2, default=str)}"
-    )
+    return HEADLINE_PROMPT_INSTRUCTIONS + "Facts JSON:\n" + json.dumps(facts, indent=2, default=str)
 
 
 def template_headline_text(facts: dict[str, Any]) -> str:
@@ -2773,6 +2772,8 @@ class NexusLeagueBot(discord.Client):
                 if cleaned:
                     headline_text = cleaned
                     used_ai = True
+                else:
+                    LOGGER.warning("AI headline generation returned empty text for league %s", league_id)
             except Exception as exc:
                 LOGGER.warning("AI headline generation failed for league %s: %s", league_id, exc)
 
