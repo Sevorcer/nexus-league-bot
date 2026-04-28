@@ -316,6 +316,22 @@ class Database:
             )
             cur.execute("ALTER TABLE bot_xp_users ADD COLUMN IF NOT EXISTS guild_id BIGINT NOT NULL DEFAULT 0")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS bot_xp_users_guild_user_idx ON bot_xp_users (guild_id, user_id)")
+            cur.execute("ALTER TABLE bot_xp_users DROP CONSTRAINT IF EXISTS bot_xp_users_pkey")
+            cur.execute(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.table_constraints
+                        WHERE table_name = 'bot_xp_users'
+                          AND table_schema = 'public'
+                          AND constraint_type = 'PRIMARY KEY'
+                    ) THEN
+                        ALTER TABLE bot_xp_users ADD PRIMARY KEY (guild_id, user_id);
+                    END IF;
+                END$$
+                """
+            )
 
             cur.execute(
                 """
