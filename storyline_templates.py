@@ -5,6 +5,40 @@ All lists are grouped by content_type used in bot_content_memory.
 Template strings use {placeholders} for slot-filling after selection.
 Plain strings need no formatting.
 """
+import itertools
+import random
+
+# ---------------------------------------------------------------------------
+# SLOT-TEMPLATE HELPERS
+# ---------------------------------------------------------------------------
+
+def build_slot_candidates(template: str, slots: dict[str, list[str]]) -> list[str]:
+    """Return all combinations produced by filling *template* with *slots* values."""
+    keys = list(slots.keys())
+    if not keys:
+        return [template]
+    values = [slots[k] for k in keys]
+    results: list[str] = []
+    for combo in itertools.product(*values):
+        mapping = dict(zip(keys, combo))
+        results.append(template.format(**mapping))
+    return results
+
+
+def build_all_slot_candidates(
+    templates: list[str],
+    slots: dict[str, list[str]],
+) -> list[str]:
+    """Apply *slots* to every template string and return the combined flat list."""
+    out: list[str] = []
+    for t in templates:
+        out.extend(build_slot_candidates(t, slots))
+    return out
+
+
+def _merge_pool(base: list[str], generated: list[str]) -> list[str]:
+    """Return *base* + *generated* with duplicates removed, preserving order."""
+    return list(dict.fromkeys(base + generated))
 
 # ---------------------------------------------------------------------------
 # MATCHUP ANGLES  (content_type: "matchup_angle")
@@ -62,6 +96,29 @@ MATCHUP_ANGLES: list[str] = [
     "road upset attempt",
     "first-half dominance battle",
 ]
+
+# Slot-generated extension – multiplies base angles × modifiers × contexts
+_ANGLE_MODIFIERS: list[str] = [
+    "high-stakes", "low-margin", "pressure-packed", "playoff-caliber",
+    "win-or-go-home", "momentum-defining", "conference-shaping", "identity-testing",
+    "season-defining", "narrative-shifting",
+]
+_ANGLE_CONTEXTS: list[str] = [
+    "showdown", "battle", "clash", "duel", "test", "confrontation",
+    "collision", "matchup", "contest", "encounter",
+]
+_ANGLE_SLOT_TEMPLATES: list[str] = [
+    "{modifier} {context}",
+    "{modifier} divisional {context}",
+    "{modifier} late-season {context}",
+    "{modifier} early-statement {context}",
+    "{modifier} playoff-seeding {context}",
+]
+MATCHUP_ANGLES_GENERATED: list[str] = build_all_slot_candidates(
+    _ANGLE_SLOT_TEMPLATES,
+    {"modifier": _ANGLE_MODIFIERS, "context": _ANGLE_CONTEXTS},
+)
+MATCHUP_ANGLES = _merge_pool(MATCHUP_ANGLES, MATCHUP_ANGLES_GENERATED)
 
 # ---------------------------------------------------------------------------
 # MATCHUP OPENERS  (content_type: "matchup_opener")
@@ -168,6 +225,32 @@ MATCHUP_OPENERS: list[str] = [
     "The {angle} edge is real for both sides as {away} and {home} meet up in Week {week}.",
     "Everything about Week {week} screams {angle} when you look at {away} vs. {home}.",
 ]
+
+_OPENER_SLOT_TEMPLATES: list[str] = [
+    "{lead} {{away}} and {{home}} are headed for a {descriptor} game in Week {{week}}.",
+    "{lead} the matchup between {{away}} and {{home}} in Week {{week}} carries {descriptor} weight.",
+    "{lead} Week {{week}} delivers {{away}} vs. {{home}} in what looks like a {descriptor} game.",
+    "{lead} the {descriptor} nature of this Week {{week}} encounter between {{away}} and {{home}} cannot be overstated.",
+    "{lead} {{away}} at {{home}} in Week {{week}} — every sign points to a {descriptor} outcome.",
+]
+_OPENER_LEADS: list[str] = [
+    "Right from the first snap,", "Nobody is pretending otherwise —",
+    "Straight out of the schedule maker's fever dream,", "Make no mistake:",
+    "The league has been building toward this —", "Long story short:",
+    "Without any buildup needed,", "Cutting straight to the point:",
+    "Whatever the context,", "Simply put:",
+]
+_OPENER_DESCRIPTORS: list[str] = [
+    "consequential", "fascinating", "pivotal", "electric", "volatile",
+    "critical", "decisive", "heavyweight", "high-leverage", "pressure-cooker",
+    "must-watch", "can't-miss", "season-defining", "character-revealing",
+    "reputation-building",
+]
+MATCHUP_OPENERS_GENERATED: list[str] = build_all_slot_candidates(
+    _OPENER_SLOT_TEMPLATES,
+    {"lead": _OPENER_LEADS, "descriptor": _OPENER_DESCRIPTORS},
+)
+MATCHUP_OPENERS = _merge_pool(MATCHUP_OPENERS, MATCHUP_OPENERS_GENERATED)
 
 # ---------------------------------------------------------------------------
 # MATCHUP BODIES  (content_type: "matchup_body")
@@ -277,6 +360,34 @@ MATCHUP_BODIES: list[str] = [
     "Every single snap in {away} vs. {home} will matter — this is about who wants it more.",
 ]
 
+_BODY_SLOT_TEMPLATES: list[str] = [
+    "{setup} {payoff} between {{away}} and {{home}}.",
+    "{setup} the {{away}}-{{home}} matchup will be decided by {payoff}.",
+    "{setup} for {{away}} and {{home}}, {payoff} is the central question.",
+    "{setup} watch the {payoff} story line play out between {{away}} and {{home}}.",
+    "{setup} {payoff} is what separates {{away}} and {{home}} today.",
+]
+_BODY_SETUPS: list[str] = [
+    "In a game this close,", "Given how evenly matched these teams are,",
+    "With the stakes this high,", "Given everything on the line,",
+    "In a matchup with no clear favorite,", "When talent is this even,",
+    "In a game defined by margins,", "With playoff positioning on the table,",
+    "Given the rivalry history,", "In a game the standings demanded,",
+]
+_BODY_PAYOFFS: list[str] = [
+    "turnover margin", "third-down conversion rate", "red-zone efficiency",
+    "pass-rush pressure", "time of possession", "field position",
+    "fourth-quarter execution", "opening-drive momentum",
+    "defensive line dominance", "play-action effectiveness",
+    "slot coverage discipline", "blitz pickup", "screen game efficiency",
+    "special-teams field position", "two-minute drill execution",
+]
+MATCHUP_BODIES_GENERATED: list[str] = build_all_slot_candidates(
+    _BODY_SLOT_TEMPLATES,
+    {"setup": _BODY_SETUPS, "payoff": _BODY_PAYOFFS},
+)
+MATCHUP_BODIES = _merge_pool(MATCHUP_BODIES, MATCHUP_BODIES_GENERATED)
+
 # ---------------------------------------------------------------------------
 # MATCHUP STAKES  (content_type: "matchup_stakes")
 # Plain strings – why this game matters.
@@ -382,6 +493,53 @@ MATCHUP_STAKES: list[str] = [
     "This is the game both teams knew was coming — the one that sorts out the real contenders.",
 ]
 
+_STAKES_SLOT_TEMPLATES: list[str] = [
+    "The winner gains {benefit}; the loser faces {cost}.",
+    "A win and {benefit}; a loss and {cost}.",
+    "{context}: the winner {benefit}, the loser {cost}.",
+    "This is a {context} — win and {benefit}, lose and {cost}.",
+    "The margin matters: {benefit} awaits the winner, {cost} awaits the loser.",
+]
+_STAKES_CONTEXTS: list[str] = [
+    "playoff-seeding game", "tiebreaker battle", "momentum game",
+    "division-positioning game", "wild-card preview", "statement game",
+    "conference-standing game", "pressure-cooker matchup",
+]
+_STAKES_BENEFITS: list[str] = [
+    "gains breathing room in the standings",
+    "takes control of the division race",
+    "moves into a playoff position",
+    "builds a multi-game cushion",
+    "separates from the middle of the pack",
+    "earns a crucial tiebreaker edge",
+    "keeps the top-seed conversation alive",
+    "enters the final stretch with momentum",
+]
+_STAKES_COSTS: list[str] = [
+    "drops into must-win territory",
+    "falls out of a playoff position",
+    "loses tiebreaker ground",
+    "absorbs a damaging confidence hit",
+    "needs to win every remaining game",
+    "cedes ground to multiple teams simultaneously",
+    "sees their path to the postseason narrow sharply",
+    "must rely on other teams' losses to recover",
+]
+MATCHUP_STAKES_GENERATED: list[str] = build_all_slot_candidates(
+    _STAKES_SLOT_TEMPLATES[:2],
+    {"benefit": _STAKES_BENEFITS, "cost": _STAKES_COSTS},
+) + build_all_slot_candidates(
+    _STAKES_SLOT_TEMPLATES[2:3],
+    {"context": _STAKES_CONTEXTS, "benefit": _STAKES_BENEFITS, "cost": _STAKES_COSTS},
+) + build_all_slot_candidates(
+    _STAKES_SLOT_TEMPLATES[3:4],
+    {"context": _STAKES_CONTEXTS, "benefit": _STAKES_BENEFITS, "cost": _STAKES_COSTS},
+) + build_all_slot_candidates(
+    _STAKES_SLOT_TEMPLATES[4:5],
+    {"benefit": _STAKES_BENEFITS, "cost": _STAKES_COSTS},
+)
+MATCHUP_STAKES = _merge_pool(MATCHUP_STAKES, MATCHUP_STAKES_GENERATED)
+
 # ---------------------------------------------------------------------------
 # PLAYER WHY LINES – PASSING  (content_type: "player_why_passing")
 # Template strings – use .format(first=, team_name=)
@@ -467,6 +625,63 @@ PLAYER_WHY_PASSING: list[str] = [
     "For {team_name} to win today, {first} must play his best version — and he is capable of exactly that.",
     "The experience {first} brings to clutch situations makes {team_name} a team that never quite feels out of it.",
 ]
+
+_PASSING_ROLES: list[str] = [
+    "decision-maker", "extension-creator", "playmaker", "field-general",
+    "rhythm-setter", "two-minute specialist", "check-down master",
+    "deep-ball anchor", "pocket-presence anchor", "pre-snap processor",
+    "coverage beater", "timing-route executor", "red-zone engineer",
+    "scramble-drill specialist", "fourth-quarter closer",
+]
+_PASSING_ACTIONS: list[str] = [
+    "extends plays outside the pocket", "reads the defense in real time",
+    "fires on time through his reads", "delivers under pressure",
+    "commands the two-minute offense", "controls snap-count tempo",
+    "navigates the blitz with composure", "distributes to all three levels",
+    "takes the check-down without hesitation", "keeps his eyes downfield",
+    "anticipates the route break", "manipulates the safety with his eyes",
+    "throws with touch on the deep ball", "beats the blitz with a quick release",
+    "converts on third-and-long with improvisation",
+]
+_PASSING_OUTCOMES: list[str] = [
+    "controls the game script",
+    "creates separation for every pass catcher",
+    "wins the possession battle",
+    "stays ahead of the chains",
+    "converts the critical third down",
+    "gets points before the half",
+    "keeps the defense honest",
+    "manufactures scoring drives from nothing",
+    "extends drives with precision",
+    "puts the offense in scoring position",
+    "forces the defense into prevent mode",
+    "builds an early lead that holds",
+]
+_PASSING_ATTRIBUTES: list[str] = [
+    "pocket composure", "release speed", "pre-snap processing",
+    "arm accuracy", "decision speed", "coverage recognition",
+    "ball placement", "two-minute-drill efficiency", "third-down poise",
+    "deep-ball touch", "intermediate precision", "red-zone command",
+    "scramble awareness", "check-down discipline",
+]
+_PASSING_EDGE_TYPES: list[str] = [
+    "tactical", "execution", "competitive", "game-management",
+    "momentum-control", "situational",
+]
+PLAYER_WHY_PASSING_GENERATED: list[str] = build_all_slot_candidates(
+    ["{{first}} is the {role} that makes {{team_name}}'s offense click."],
+    {"role": _PASSING_ROLES},
+) + build_all_slot_candidates(
+    ["When {{first}} {action}, {{team_name}} {outcome}."],
+    {"action": _PASSING_ACTIONS, "outcome": _PASSING_OUTCOMES},
+) + build_all_slot_candidates(
+    ["{{first}}'s {attribute} is the {edge_type} edge for {{team_name}}."],
+    {"attribute": _PASSING_ATTRIBUTES, "edge_type": _PASSING_EDGE_TYPES},
+) + build_all_slot_candidates(
+    ["{{first}}'s {attribute} transforms {{team_name}}'s {role} into a decisive weapon."],
+    {"attribute": _PASSING_ATTRIBUTES, "role": _PASSING_ROLES},
+)
+PLAYER_WHY_PASSING = _merge_pool(PLAYER_WHY_PASSING, PLAYER_WHY_PASSING_GENERATED)
 
 # ---------------------------------------------------------------------------
 # PLAYER WHY LINES – RUSHING  (content_type: "player_why_rushing")
@@ -554,6 +769,59 @@ PLAYER_WHY_RUSHING: list[str] = [
     "{first} has forced more missed tackles than almost anyone in the league, making every {team_name} drive dangerous.",
 ]
 
+_RUSHING_ROLES: list[str] = [
+    "ground-game engine", "clock-eating workhorse", "explosive playmaker",
+    "physical tone-setter", "third-down closer", "run-blocking catalyst",
+    "field-position generator", "momentum-shifter", "short-yardage hammer",
+    "play-action setup man", "fourth-quarter grinder", "open-field weapon",
+    "contact-balance artist", "gap-reading maestro", "cutback specialist",
+]
+_RUSHING_ACTIONS: list[str] = [
+    "finds the cutback lane on time", "breaks the first tackle",
+    "churns yards after contact", "hits the gap at full speed",
+    "plants and cuts before linebackers react", "runs through arm tackles",
+    "takes the carry to the second level", "protects the ball on every rep",
+    "picks up the blitz-pickup assignment", "beats the safety to the edge",
+    "slips through the A-gap untouched", "converts the short-yardage call",
+    "makes the linebacker miss in the backfield", "falls forward on every carry",
+    "accelerates through the hole without hesitation",
+]
+_RUSHING_OUTCOMES: list[str] = [
+    "the offense controls clock",
+    "play-action opens up downfield",
+    "the defense wears down",
+    "the line of scrimmage shifts",
+    "the offensive rhythm accelerates",
+    "the passing game becomes two-dimensional",
+    "field position flips in their favor",
+    "the defense commits extra defenders to the box",
+    "the play-action fake becomes automatic",
+    "every offensive series gains momentum",
+    "the game script tips in their favor",
+    "the fourth quarter is theirs to control",
+]
+_RUSHING_ATTRIBUTES: list[str] = [
+    "patience at the line", "burst through the gap", "contact balance",
+    "open-field acceleration", "run instincts", "third-down versatility",
+    "short-yardage reliability", "clock-management value",
+    "vision through traffic", "cutback timing", "stiff-arm power",
+    "pass-protection awareness", "fourth-quarter stamina", "gap discipline",
+]
+PLAYER_WHY_RUSHING_GENERATED: list[str] = build_all_slot_candidates(
+    ["{{first}} is the {role} that powers {{team_name}}'s offense."],
+    {"role": _RUSHING_ROLES},
+) + build_all_slot_candidates(
+    ["When {{first}} {action}, {{team_name}} {outcome}."],
+    {"action": _RUSHING_ACTIONS, "outcome": _RUSHING_OUTCOMES},
+) + build_all_slot_candidates(
+    ["{{first}}'s {attribute} is the foundation of {{team_name}}'s run game."],
+    {"attribute": _RUSHING_ATTRIBUTES},
+) + build_all_slot_candidates(
+    ["{{first}}'s {attribute} combined with {{team_name}}'s {role} scheme creates an unstoppable ground game."],
+    {"attribute": _RUSHING_ATTRIBUTES, "role": _RUSHING_ROLES},
+)
+PLAYER_WHY_RUSHING = _merge_pool(PLAYER_WHY_RUSHING, PLAYER_WHY_RUSHING_GENERATED)
+
 # ---------------------------------------------------------------------------
 # PLAYER WHY LINES – DEFENSE  (content_type: "player_why_defense")
 # Template strings – use .format(first=, team_name=)
@@ -639,6 +907,59 @@ PLAYER_WHY_DEFENSE: list[str] = [
     "Preparation and pure physicality combine in {first} to give {team_name} a defensive standout.",
     "The way {first} sets the edge on sweep plays is a skill that directly protects {team_name}'s run-defense numbers.",
 ]
+
+_DEFENSE_ROLES: list[str] = [
+    "pass-rush specialist", "run-stuffing anchor", "coverage disruptor",
+    "edge-setting force", "backfield-penetrating weapon", "turnover generator",
+    "scheme-wrecker", "gap-assignment specialist", "contain-the-QB anchor",
+    "interior-pressure creator", "outside-leverage setter", "spy-the-QB master",
+    "nickel-blitz weapon", "run-game eraser", "pocket-collapse engine",
+]
+_DEFENSE_ACTIONS: list[str] = [
+    "disrupts the backfield in the first quarter", "wins the one-on-one on the edge",
+    "diagnoses the play presnap", "collapses the pocket from the interior",
+    "forces the quarterback off his spot", "reads the screen before it develops",
+    "closes on the ball carrier in the open field", "beats the block to the ball",
+    "draws a double-team that frees a teammate", "strips the ball at the point of attack",
+    "bats the pass at the line of scrimmage", "blows up the pulling guard",
+    "runs down the screen from behind", "fills the gap before the runner commits",
+    "converts pressure into a strip-sack",
+]
+_DEFENSE_OUTCOMES: list[str] = [
+    "the entire offense tightens up",
+    "the offense loses a full dimension",
+    "the quarterback's confidence erodes",
+    "field position shifts immediately",
+    "the defensive line controls the trenches",
+    "scoring opportunities disappear",
+    "the game script tilts dramatically",
+    "the opponent's best play-call becomes unavailable",
+    "the offense abandons its run-first plan",
+    "the secondary gets help it did not need",
+    "the coordinator scraps half the game plan",
+    "the quarterback is left without a clean pocket all day",
+]
+_DEFENSE_ATTRIBUTES: list[str] = [
+    "first-step explosiveness", "hand technique", "coverage recognition",
+    "backfield disruption", "gap discipline", "edge-setting ability",
+    "closing speed", "presnap alignment reads", "leverage at the point of attack",
+    "motor and effort across four quarters", "run-fit instincts",
+    "coverage extension", "strip-technique consistency", "film-room preparation",
+]
+PLAYER_WHY_DEFENSE_GENERATED: list[str] = build_all_slot_candidates(
+    ["{{first}} is {{team_name}}'s {role} — and that title carries real impact."],
+    {"role": _DEFENSE_ROLES},
+) + build_all_slot_candidates(
+    ["When {{first}} {action}, {{team_name}} {outcome}."],
+    {"action": _DEFENSE_ACTIONS, "outcome": _DEFENSE_OUTCOMES},
+) + build_all_slot_candidates(
+    ["{{first}}'s {attribute} is the defensive edge that makes {{team_name}} hard to score on."],
+    {"attribute": _DEFENSE_ATTRIBUTES},
+) + build_all_slot_candidates(
+    ["{{first}}'s {attribute} elevates {{team_name}}'s {role} scheme to a different level."],
+    {"attribute": _DEFENSE_ATTRIBUTES, "role": _DEFENSE_ROLES},
+)
+PLAYER_WHY_DEFENSE = _merge_pool(PLAYER_WHY_DEFENSE, PLAYER_WHY_DEFENSE_GENERATED)
 
 # ---------------------------------------------------------------------------
 # PROFILE PHRASES – contender  (content_type: "profile_contender")
@@ -833,6 +1154,141 @@ PROFILE_NEUTRAL: list[str] = [
 ]
 
 # ---------------------------------------------------------------------------
+# SLOT-GENERATED PROFILE EXTENSIONS
+# ---------------------------------------------------------------------------
+_PROFILE_ADVERBS: list[str] = [
+    "consistently", "confidently", "dominantly", "relentlessly",
+    "efficiently", "impressively", "precisely", "methodically",
+]
+_PROFILE_CONTENDER_STYLES: list[str] = [
+    "championship-caliber", "complete", "disciplined", "elite-level",
+    "pressure-proof", "all-phases", "execution-first", "balanced",
+]
+_PROFILE_CONTENDER_ACTIONS: list[str] = [
+    "answering every challenge", "raising the bar for the league",
+    "making the case for top seed", "setting the standard",
+    "winning the close ones and the blowouts", "showing up in big moments",
+    "maximizing every possession", "playing complementary football",
+]
+PROFILE_CONTENDER_GENERATED: list[str] = build_all_slot_candidates(
+    ["{adverb} playing {style} football right now"],
+    {"adverb": _PROFILE_ADVERBS, "style": _PROFILE_CONTENDER_STYLES},
+) + build_all_slot_candidates(
+    ["{adverb} {action}"],
+    {"adverb": _PROFILE_ADVERBS, "action": _PROFILE_CONTENDER_ACTIONS},
+)
+PROFILE_CONTENDER = _merge_pool(PROFILE_CONTENDER, PROFILE_CONTENDER_GENERATED)
+
+_PROFILE_STRUGGLING_ACTIONS: list[str] = [
+    "searching for answers on both sides of the ball",
+    "trying to stop the slide with limited success so far",
+    "finding new ways to lose games that were winnable",
+    "underperforming against every metric that predicted more wins",
+    "struggling to execute in the moments that decide games",
+    "fighting through a confidence crisis that shows up at the worst times",
+    "unable to put together four complete quarters",
+    "dropping winnable games to teams they should handle",
+]
+_PROFILE_STRUGGLING_FEELINGS: list[str] = [
+    "urgency is no longer optional",
+    "the path to recovery is narrowing by the week",
+    "the talent is there but the results have not arrived",
+    "every loss makes the climb harder",
+    "the adjustments have not translated to wins",
+    "the potential has outrun the production all season",
+]
+PROFILE_STRUGGLING_GENERATED: list[str] = build_all_slot_candidates(
+    ["{action} — {feeling}"],
+    {"action": _PROFILE_STRUGGLING_ACTIONS, "feeling": _PROFILE_STRUGGLING_FEELINGS},
+)
+PROFILE_STRUGGLING = _merge_pool(PROFILE_STRUGGLING, PROFILE_STRUGGLING_GENERATED)
+
+_PROFILE_TURNOVER_DEGREES: list[str] = [
+    "consistently", "dominantly", "impressively", "at a league-leading clip",
+    "at an unsustainable but very real rate", "methodically",
+]
+_PROFILE_TURNOVER_RESULTS: list[str] = [
+    "short fields", "extra scoring attempts", "momentum flips",
+    "offensive series out of thin air", "easy scoring opportunities",
+]
+PROFILE_TURNOVER_GENERATED: list[str] = build_all_slot_candidates(
+    ["Winning the turnover battle {degree} this season"],
+    {"degree": _PROFILE_TURNOVER_DEGREES},
+) + build_all_slot_candidates(
+    ["Turning defensive stops into {result} at a {degree} rate"],
+    {"result": _PROFILE_TURNOVER_RESULTS, "degree": _PROFILE_TURNOVER_DEGREES},
+)
+PROFILE_TURNOVER = _merge_pool(PROFILE_TURNOVER, PROFILE_TURNOVER_GENERATED)
+
+_PROFILE_OFFENSE_ADVERBS: list[str] = [
+    "consistently", "explosively", "efficiently", "relentlessly",
+    "creatively", "impressively", "dominantly",
+]
+_PROFILE_OFFENSE_OUTPUTS: list[str] = [
+    "points in bunches", "touchdowns at will", "big numbers",
+    "league-leading point totals", "elite scoring totals",
+]
+_PROFILE_OFFENSE_ACTIONS: list[str] = [
+    "creating plays from nothing", "converting in the red zone",
+    "winning third downs", "hitting the big play", "exploiting every defensive gap",
+]
+PROFILE_OFFENSE_GENERATED: list[str] = build_all_slot_candidates(
+    ["{adverb} putting up {output} on the scoreboard"],
+    {"adverb": _PROFILE_OFFENSE_ADVERBS, "output": _PROFILE_OFFENSE_OUTPUTS},
+) + build_all_slot_candidates(
+    ["The offense is {adverb} {action} — and the points follow"],
+    {"adverb": _PROFILE_OFFENSE_ADVERBS, "action": _PROFILE_OFFENSE_ACTIONS},
+)
+PROFILE_OFFENSE = _merge_pool(PROFILE_OFFENSE, PROFILE_OFFENSE_GENERATED)
+
+_PROFILE_DEFENSE_ADVERBS: list[str] = [
+    "consistently", "stingily", "dominantly", "efficiently",
+    "relentlessly", "impressively", "suffocatingly",
+]
+_PROFILE_DEFENSE_OUTPUTS: list[str] = [
+    "fewer than league-average points", "field goals instead of touchdowns",
+    "three-and-outs at a high rate", "below-average yardage totals",
+    "minimal red-zone visits", "low third-down conversion rates",
+]
+_PROFILE_DEFENSE_ACTIONS: list[str] = [
+    "making life difficult for every offense",
+    "setting the physical tone every week",
+    "creating pressure on every passing down",
+    "winning the line-of-scrimmage battle",
+    "turning would-be touchdowns into field goals",
+]
+PROFILE_DEFENSE_GENERATED: list[str] = build_all_slot_candidates(
+    ["{adverb} holding opponents to {output}"],
+    {"adverb": _PROFILE_DEFENSE_ADVERBS, "output": _PROFILE_DEFENSE_OUTPUTS},
+) + build_all_slot_candidates(
+    ["The defense is {adverb} {action} — and wins follow"],
+    {"adverb": _PROFILE_DEFENSE_ADVERBS, "action": _PROFILE_DEFENSE_ACTIONS},
+)
+PROFILE_DEFENSE = _merge_pool(PROFILE_DEFENSE, PROFILE_DEFENSE_GENERATED)
+
+_PROFILE_NEUTRAL_ADVERBS: list[str] = [
+    "consistently", "earnestly", "steadily", "patiently",
+    "week by week", "play by play", "methodically",
+]
+_PROFILE_NEUTRAL_ACTIONS: list[str] = [
+    "competing in every game", "staying in the playoff race",
+    "finding ways to stay relevant", "keeping the margin close",
+    "generating enough offense to compete", "defending well enough to win",
+]
+_PROFILE_NEUTRAL_X_FACTORS: list[str] = [
+    "finishing ability", "fourth-quarter composure", "turnover-free game",
+    "explosive play", "red-zone efficiency", "closing drive",
+]
+PROFILE_NEUTRAL_GENERATED: list[str] = build_all_slot_candidates(
+    ["{adverb} {action} while searching for the right combination"],
+    {"adverb": _PROFILE_NEUTRAL_ADVERBS, "action": _PROFILE_NEUTRAL_ACTIONS},
+) + build_all_slot_candidates(
+    ["Competing {adverb} but still searching for the {x_factor} that turns losses into wins"],
+    {"adverb": _PROFILE_NEUTRAL_ADVERBS, "x_factor": _PROFILE_NEUTRAL_X_FACTORS},
+)
+PROFILE_NEUTRAL = _merge_pool(PROFILE_NEUTRAL, PROFILE_NEUTRAL_GENERATED)
+
+# ---------------------------------------------------------------------------
 # WEEKLY NEWS OPENERS  (content_type: "weekly_news_opener")
 # Template strings – use .format(week=, top_team=, away=, home=)
 # ---------------------------------------------------------------------------
@@ -916,6 +1372,30 @@ WEEKLY_NEWS_OPENERS: list[str] = [
     "There is no downtime in Week {week} — every snap carries the full weight of the season.",
     "Week {week} is the antidote to any notion that this season lacks drama.",
 ]
+
+_NEWS_OPENER_VERBS: list[str] = [
+    "arrives with everything on the line", "drops into the schedule with full force",
+    "brings the most meaningful slate of games yet", "delivers another must-play round",
+    "heats up the standings race", "raises the stakes across the board",
+    "tightens the playoff picture further", "puts teams to the test",
+    "separates the contenders from the pretenders",
+]
+_NEWS_OPENER_CONTEXTS: list[str] = [
+    "the standings have never been closer",
+    "every team enters with something to prove",
+    "the race at the top intensifies",
+    "playoff math is now a daily reality for every team",
+    "the margin for error has essentially disappeared",
+    "the pressure is mutual across every matchup",
+    "no team can afford to take a game off",
+    "late-season urgency is setting in league-wide",
+    "the schedule refuses to offer any easy games",
+]
+WEEKLY_NEWS_OPENERS_GENERATED: list[str] = build_all_slot_candidates(
+    ["Week {{week}} {verb} — {context}."],
+    {"verb": _NEWS_OPENER_VERBS, "context": _NEWS_OPENER_CONTEXTS},
+)
+WEEKLY_NEWS_OPENERS = _merge_pool(WEEKLY_NEWS_OPENERS, WEEKLY_NEWS_OPENERS_GENERATED)
 
 # ---------------------------------------------------------------------------
 # WEEKLY NEWS BODY LINES  (content_type: "weekly_news_body")
@@ -1004,6 +1484,24 @@ WEEKLY_NEWS_BODY_LINES: list[str] = [
     "The final stretch of the season starts with games that require every team to be at its best.",
 ]
 
+_NEWS_BODY_METRICS: list[str] = [
+    "turnover", "third-down", "red-zone", "time-of-possession",
+    "field-position", "pass-rush", "scoring-margin",
+    "play-action", "fourth-down",
+]
+_NEWS_BODY_DESCRIPTORS: list[str] = [
+    "critical", "decisive", "season-defining", "pressure-filled",
+    "highly-competitive", "must-watch", "pivotal",
+]
+WEEKLY_NEWS_BODY_GENERATED: list[str] = build_all_slot_candidates(
+    ["The {metric} battle between {{away}} and {{home}} will be {descriptor}."],
+    {"metric": _NEWS_BODY_METRICS, "descriptor": _NEWS_BODY_DESCRIPTORS},
+) + build_all_slot_candidates(
+    ["{{top_team}} at the top is the story, but the {metric} battle defines the full Week {{week}} narrative."],
+    {"metric": _NEWS_BODY_METRICS},
+)
+WEEKLY_NEWS_BODY_LINES = _merge_pool(WEEKLY_NEWS_BODY_LINES, WEEKLY_NEWS_BODY_GENERATED)
+
 # ---------------------------------------------------------------------------
 # HEADLINE TEMPLATES – line 1 (top team leader)  (content_type: "headline_line1")
 # Template strings – use .format(top_team=, top_record=)
@@ -1030,6 +1528,27 @@ HEADLINE_LINE1: list[str] = [
     "{top_team} at {top_record}: a reminder of what consistent execution looks like across every phase.",
     "No team in the league can match {top_team}'s résumé right now — {top_record} says it all.",
 ]
+
+_HL1_VERBS: list[str] = [
+    "leads", "tops", "paces", "commands", "anchors", "dominates",
+    "controls", "occupies the top of", "sets the pace in",
+]
+_HL1_DESCRIPTORS: list[str] = [
+    "convincingly", "decisively", "clearly", "comfortably",
+    "impressively", "undeniably", "emphatically", "definitively",
+]
+_HL1_ADJ_DESCRIPTORS: list[str] = [
+    "best", "top", "most impressive", "most consistent",
+    "most dominant", "hardest-to-beat",
+]
+HEADLINE_LINE1_GENERATED: list[str] = build_all_slot_candidates(
+    ["At {{top_record}}, {{top_team}} {verb} the league {descriptor}."],
+    {"verb": _HL1_VERBS, "descriptor": _HL1_DESCRIPTORS},
+) + build_all_slot_candidates(
+    ["The league's {descriptor} record belongs to {{top_team}} at {{top_record}}."],
+    {"descriptor": _HL1_ADJ_DESCRIPTORS},
+)
+HEADLINE_LINE1 = _merge_pool(HEADLINE_LINE1, HEADLINE_LINE1_GENERATED)
 
 # ---------------------------------------------------------------------------
 # HEADLINE TEMPLATES – line 3 (passing leader)  (content_type: "headline_line3")
@@ -1058,6 +1577,23 @@ HEADLINE_LINE3: list[str] = [
     "Air it out: {passer} leads the league throwing the ball with {pass_yards} yards and {pass_tds} touchdowns.",
 ]
 
+_HL3_VERBS: list[str] = [
+    "paces", "leads", "tops", "dominates", "commands",
+    "owns", "controls", "anchors", "holds",
+]
+_HL3_DESCRIPTORS: list[str] = [
+    "throwing for", "passing for", "accumulating",
+    "racking up", "posting",
+]
+HEADLINE_LINE3_GENERATED: list[str] = build_all_slot_candidates(
+    ["{{passer}} {verb} all passers: {descriptor} {{pass_yards}} yards and {{pass_tds}} touchdowns."],
+    {"verb": _HL3_VERBS, "descriptor": _HL3_DESCRIPTORS},
+) + build_all_slot_candidates(
+    ["{descriptor} {{pass_yards}} yards and {{pass_tds}} TDs, {{passer}} {verb} the passing race."],
+    {"verb": _HL3_VERBS, "descriptor": _HL3_DESCRIPTORS},
+)
+HEADLINE_LINE3 = _merge_pool(HEADLINE_LINE3, HEADLINE_LINE3_GENERATED)
+
 # ---------------------------------------------------------------------------
 # HEADLINE TEMPLATES – line 4 (rushing leader)  (content_type: "headline_line4")
 # Template strings – use .format(rusher=, rush_yards=)
@@ -1085,6 +1621,23 @@ HEADLINE_LINE4: list[str] = [
     "No one has been more consistent on the ground than {rusher}: {rush_yards} yards and the top spot.",
 ]
 
+_HL4_VERBS: list[str] = [
+    "leads", "paces", "tops", "owns", "commands",
+    "controls", "dominates", "anchors", "holds",
+]
+_HL4_DESCRIPTORS: list[str] = [
+    "churning out", "grinding for", "accumulating",
+    "racking up", "posting",
+]
+HEADLINE_LINE4_GENERATED: list[str] = build_all_slot_candidates(
+    ["{{rusher}} {verb} all rushers: {descriptor} {{rush_yards}} yards on the ground."],
+    {"verb": _HL4_VERBS, "descriptor": _HL4_DESCRIPTORS},
+) + build_all_slot_candidates(
+    ["{descriptor} {{rush_yards}} yards, {{rusher}} {verb} the rushing leaderboard."],
+    {"verb": _HL4_VERBS, "descriptor": _HL4_DESCRIPTORS},
+)
+HEADLINE_LINE4 = _merge_pool(HEADLINE_LINE4, HEADLINE_LINE4_GENERATED)
+
 # ---------------------------------------------------------------------------
 # HEADLINE TEMPLATES – line 5 (receiving leader)  (content_type: "headline_line5")
 # Template strings – use .format(receiver=, rec_yards=, rec_tds=)
@@ -1111,3 +1664,20 @@ HEADLINE_LINE5: list[str] = [
     "{rec_yards} yards and {rec_tds} touchdowns for {receiver} — elite-tier receiving production.",
     "{receiver} has been impossible to cover: {rec_yards} receiving yards and {rec_tds} touchdowns.",
 ]
+
+_HL5_VERBS: list[str] = [
+    "leads", "tops", "paces", "dominates", "commands",
+    "owns", "controls", "anchors", "holds",
+]
+_HL5_DESCRIPTORS: list[str] = [
+    "catching for", "hauling in", "accumulating",
+    "racking up", "posting",
+]
+HEADLINE_LINE5_GENERATED: list[str] = build_all_slot_candidates(
+    ["{{receiver}} {verb} all receivers: {descriptor} {{rec_yards}} yards and {{rec_tds}} touchdowns."],
+    {"verb": _HL5_VERBS, "descriptor": _HL5_DESCRIPTORS},
+) + build_all_slot_candidates(
+    ["{descriptor} {{rec_yards}} yards and {{rec_tds}} TDs, {{receiver}} {verb} the receiving race."],
+    {"verb": _HL5_VERBS, "descriptor": _HL5_DESCRIPTORS},
+)
+HEADLINE_LINE5 = _merge_pool(HEADLINE_LINE5, HEADLINE_LINE5_GENERATED)
