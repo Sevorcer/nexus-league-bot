@@ -2753,6 +2753,14 @@ class NexusLeagueBot(discord.Client):
                 summary_lines.append("Skipped:\n" + "\n".join(f"• {name}" for name in skipped_channels[:20]))
             await interaction.followup.send("\n\n".join(summary_lines), ephemeral=True)
 
+            if created_channels:
+                news_status = await self._auto_post_weekly_news(guild, league_id, week, phase_value, cfg or {})
+                headlines_status = await self._auto_post_weekly_headlines(guild, league_id, cfg or {})
+                await interaction.followup.send(
+                    f"**Auto-post results:**\n• {news_status}\n• {headlines_status}",
+                    ephemeral=True,
+                )
+
         @self.tree.command(name="delete_weekly_channels", description="Admin: delete matchup channels for a specific week")
         @app_commands.choices(phase=[
             app_commands.Choice(name="Preseason", value="preseason"),
@@ -3233,19 +3241,14 @@ class NexusLeagueBot(discord.Client):
             )
         await interaction.response.send_message(embed=embed)
 
-    async def send_headline(self, interaction: discord.Interaction, post_to_channel: bool) -> None:
-        league_id = await self.get_league_id(interaction)
-        if league_id is None:
-            return
-        await interaction.response.defer(ephemeral=post_to_channel)
+    async def _build_headline_embed(self, guild: discord.Guild, league_id: int, cfg: dict) -> discord.Embed:
+        """Build a headlines embed without requiring a live interaction.
 
-        await interaction.response.defer(ephemeral=post_to_channel)
-
+        Raises ValueError if there is no standings data to build a meaningful headline.
+        """
         standings = await asyncio.to_thread(self.db.fetch_standings, league_id)
         if not standings:
-            await interaction.followup.send("No standings found.", ephemeral=True)
-            return
-
+            raise ValueError("No standings data available.")
         passing = await asyncio.to_thread(self.db.fetch_passing_leaders, league_id)
         rushing = await asyncio.to_thread(self.db.fetch_rushing_leaders, league_id)
         receiving = await asyncio.to_thread(self.db.fetch_receiving_leaders, league_id)
@@ -3253,8 +3256,8 @@ class NexusLeagueBot(discord.Client):
         week = await asyncio.to_thread(self.db.latest_completed_week, league_id)
         recent_games = await asyncio.to_thread(self.db.fetch_schedule_for_week, league_id, week) if week is not None else []
 
-        top_team = standings[0]
-        bottom_team = standings[-1]
+        top_team = standings[0] if standings else {}
+        bottom_team = standings[-1] if standings else {}
         passer = passing[0] if passing else {}
         rusher = rushing[0] if rushing else {}
         receiver = receiving[0] if receiving else {}
@@ -3287,22 +3290,18 @@ class NexusLeagueBot(discord.Client):
         headline_text = template_headline_text(
             facts,
             db=self.db,
-            guild_id=interaction.guild.id if interaction.guild else 0,
-            league_id=league_id or 0,
+            guild_id=guild.id,
+            league_id=league_id,
         )
         used_ai = False
-
-        guild_id = interaction.guild.id if interaction.guild else None
-        cfg = (await asyncio.to_thread(self.db.get_guild_config, guild_id)) if guild_id else {}
-        cfg = cfg or {}
-        if resolve_openai_api_key(cfg, guild_id):
+        if resolve_openai_api_key(cfg, guild.id):
             try:
                 ai_text = await asyncio.to_thread(
                     call_openai_text,
                     build_headline_prompt(facts),
                     HEADLINE_MAX_OUTPUT_TOKENS,
                     cfg,
-                    guild_id,
+                    guild.id,
                 )
                 cleaned = "\n".join(line for line in (raw.strip() for raw in ai_text.splitlines()) if line)
                 if cleaned:
@@ -3320,16 +3319,120 @@ class NexusLeagueBot(discord.Client):
             color=discord.Color.gold(),
         )
         embed.set_footer(text="AI-assisted headlines" if used_ai else "Template headlines")
+        return embed
 
-        if not post_to_channel:
-            await interaction.followup.send(embed=embed)
+    async def _auto_post_weekly_news(
+        self,
+        guild: discord.Guild,
+        league_id: int,
+        week: int,
+        phase_value: str,
+        cfg: dict,
+    ) -> str:
+        """Generate weekly news embed and post it to the configured news channel.
+
+        Returns a status string describing the result.
+        """
+        games = await asyncio.to_thread(self.db.fetch_schedule_for_week, league_id, week)
+        if not games:
+            return f"Weekly news skipped: no games found for week {week}."
+
+        standings = await asyncio.to_thread(self.db.fetch_standings, league_id)
+        scored = sorted(games, key=lambda row: abs(safe_int(row.get("home_wins")) - safe_int(row.get("away_wins"))))
+        top_games = [{"away_team": row.get("away_team"), "home_team": row.get("home_team")} for row in scored[:3]]
+        gotw_entry = top_games[0] if top_games else None
+        facts = {
+            "phase": phase_value,
+            "week": week,
+            "standings": standings[:5],
+            "top_games": top_games,
+            "gotw_pick": gotw_entry,
+        }
+        fallback = template_weekly_news_text(facts, db=self.db, guild_id=guild.id, league_id=league_id)
+        used_ai = False
+        article = fallback
+        if resolve_openai_api_key(cfg, guild.id):
+            try:
+                ai_text = await asyncio.to_thread(call_openai_text, build_weekly_news_prompt(facts), 320, cfg, guild.id)
+                cleaned = re.sub(r"\s+", " ", ai_text).strip()
+                if cleaned:
+                    article = cleaned
+                    used_ai = True
+            except Exception as exc:
+                LOGGER.warning("AI weekly news failed for week %s: %s", week, exc)
+
+        news_channel_id = safe_int(cfg.get("news_channel_id"))
+        resolved = guild.get_channel(news_channel_id) if news_channel_id else None
+        news_channel = resolved if isinstance(resolved, discord.TextChannel) else None
+        if news_channel is None:
+            return "Weekly news skipped: news channel not configured (use `/setup news_channel`)."
+
+        embed = discord.Embed(
+            title=f"📰 {phase_value.title()} Week {week} League News",
+            description=article,
+            color=0x1ABC9C,
+        )
+        if isinstance(gotw_entry, dict) and gotw_entry.get("away_team") and gotw_entry.get("home_team"):
+            embed.add_field(
+                name="GOTW Pick",
+                value=f"{safe_text(gotw_entry.get('away_team'))} @ {safe_text(gotw_entry.get('home_team'))}",
+                inline=False,
+            )
+        embed.set_footer(text="AI-assisted report" if used_ai else "Template report")
+        try:
+            await news_channel.send(embed=embed)
+            return f"Weekly news posted to {news_channel.mention} ({'AI' if used_ai else 'template'} mode)."
+        except discord.HTTPException as exc:
+            LOGGER.warning("Failed to auto-post weekly news: %s", exc)
+            return f"Weekly news failed to post: {exc}"
+
+    async def _auto_post_weekly_headlines(
+        self,
+        guild: discord.Guild,
+        league_id: int,
+        cfg: dict,
+    ) -> str:
+        """Generate headlines embed and post it to the configured leaders channel.
+
+        Returns a status string describing the result.
+        """
+        leaders_channel_id = safe_int(cfg.get("leaders_channel_id"))
+        channel = guild.get_channel(leaders_channel_id) if leaders_channel_id else None
+        if not isinstance(channel, discord.TextChannel):
+            return "Headlines skipped: leaders channel not configured (use `/setup channels`)."
+
+        try:
+            embed = await self._build_headline_embed(guild, league_id, cfg)
+            await channel.send(embed=embed)
+            return f"Headlines posted to {channel.mention}."
+        except ValueError as exc:
+            return f"Headlines skipped: {exc}"
+        except discord.HTTPException as exc:
+            LOGGER.warning("Failed to auto-post weekly headlines: %s", exc)
+            return f"Headlines failed to post: {exc}"
+
+    async def send_headline(self, interaction: discord.Interaction, post_to_channel: bool) -> None:
+        league_id = await self.get_league_id(interaction)
+        if league_id is None:
             return
+        await interaction.response.defer(ephemeral=post_to_channel)
 
         if not interaction.guild:
             await interaction.followup.send("This command can only be used in a server.", ephemeral=True)
             return
 
-        leaders_channel_id = int(cfg.get("leaders_channel_id") or 0)
+        cfg = (await asyncio.to_thread(self.db.get_guild_config, interaction.guild.id)) or {}
+        try:
+            embed = await self._build_headline_embed(interaction.guild, league_id, cfg)
+        except ValueError:
+            await interaction.followup.send("No standings found.", ephemeral=True)
+            return
+
+        if not post_to_channel:
+            await interaction.followup.send(embed=embed)
+            return
+
+        leaders_channel_id = safe_int(cfg.get("leaders_channel_id"))
         channel = interaction.guild.get_channel(leaders_channel_id) if leaders_channel_id else None
         if not isinstance(channel, discord.TextChannel):
             await interaction.followup.send("Leaders channel is not configured. Use `/setup channels` first.", ephemeral=True)
