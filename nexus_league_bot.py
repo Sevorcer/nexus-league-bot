@@ -189,19 +189,23 @@ def match_weekly_channel_names(
 ) -> list[discord.TextChannel | discord.VoiceChannel]:
     """Return channels whose names start with the week/phase prefix.
 
-    Channel names are expected to follow the pattern ``{prefix}-{...}``.
-    The prefix is derived from *phase* and *week* via :func:`format_phase_labels`:
+    Channel names are expected to follow the pattern ``{prefix}-{slug}`` or
+    ``gotw-{prefix}-{slug}``.  The prefix is derived from *phase* and *week*
+    via :func:`format_phase_labels`:
 
-    * ``"regular"`` (or ``None``) → ``wk{week}``  (e.g. ``wk6``)
+    * ``"regular"`` (or ``None``) → ``wk{week}``    (e.g. ``wk6``)
     * ``"preseason"``             → ``pre-wk{week}``
     * ``"postseason"``            → ``post-wk{week}``
 
-    A trailing ``-`` is appended before matching so that, for example, prefix
-    ``wk6`` does **not** accidentally match channels named ``wk60-...``.
+    The trailing ``-`` is appended before matching so that prefix ``wk6`` does
+    **not** accidentally match a channel named ``wk60-...``.  The ``gotw-``
+    variant is also matched (e.g. ``gotw-wk6-...``).
     """
     info = format_phase_labels(phase, week)
     prefix = info["prefix"]
-    return [ch for ch in channels if ch.name.startswith(prefix)]
+    plain = f"{prefix}-"
+    gotw = f"gotw-{prefix}-"
+    return [ch for ch in channels if ch.name.startswith(plain) or ch.name.startswith(gotw)]
 
 
 def _parse_channel_ids(raw: str | None) -> set[int]:
@@ -569,22 +573,42 @@ class Database:
         self,
         guild_id: int,
         league_id: int,
-        content_type: str,
-        keep: int = 200,
+        max_age_days: int = 120,
+        per_type_cap: int = 2000,
     ) -> None:
-        """Delete oldest rows beyond `keep` for the given content_type."""
+        """Delete stale bot_content_memory rows for this guild+league.
+
+        Two passes:
+        1. Delete rows older than *max_age_days*.
+        2. For each content_type, keep only the most recent *per_type_cap* rows.
+        """
         with self.conn() as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 DELETE FROM bot_content_memory
+                WHERE guild_id = %s
+                  AND league_id = %s
+                  AND used_at < NOW() - (%s * INTERVAL '1 day')
+                """,
+                (guild_id, league_id, max_age_days),
+            )
+            cur.execute(
+                """
+                DELETE FROM bot_content_memory
                 WHERE id IN (
-                    SELECT id FROM bot_content_memory
-                    WHERE guild_id = %s AND league_id = %s AND content_type = %s
-                    ORDER BY used_at ASC
-                    OFFSET %s
+                    SELECT id FROM (
+                        SELECT id,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY guild_id, league_id, content_type
+                                   ORDER BY used_at DESC
+                               ) AS rn
+                        FROM bot_content_memory
+                        WHERE guild_id = %s AND league_id = %s
+                    ) ranked
+                    WHERE rn > %s
                 )
                 """,
-                (guild_id, league_id, content_type, keep),
+                (guild_id, league_id, per_type_cap),
             )
             conn.commit()
 
@@ -595,7 +619,11 @@ class Database:
         content_type: str,
         content_key: str,
     ) -> None:
-        """Insert a new usage record for the given content_key."""
+        """Insert a new usage record for the given content_key.
+
+        Runs cleanup_content_memory with ~1% probability to keep the table
+        bounded without incurring overhead on every call.
+        """
         with self.conn() as conn, conn.cursor() as cur:
             cur.execute(
                 """
@@ -605,8 +633,11 @@ class Database:
                 (guild_id, league_id, content_type, content_key),
             )
             conn.commit()
-        if random.random() < 0.01:  # ~1% chance to prune old rows and keep table size manageable
-            self.cleanup_content_memory(guild_id, league_id, content_type)
+        if random.random() < 0.01:
+            try:
+                self.cleanup_content_memory(guild_id, league_id)
+            except Exception as exc:
+                LOGGER.debug("content_memory cleanup error (non-fatal): %s", exc)
 
     def get_guild_config(self, guild_id: int) -> dict[str, Any] | None:
         with self.conn() as conn, conn.cursor() as cur:
@@ -2722,7 +2753,7 @@ class NexusLeagueBot(discord.Client):
                 summary_lines.append("Skipped:\n" + "\n".join(f"• {name}" for name in skipped_channels[:20]))
             await interaction.followup.send("\n\n".join(summary_lines), ephemeral=True)
 
-        @self.tree.command(name="delete_weekly_channels", description="Admin: delete all matchup channels for a week")
+        @self.tree.command(name="delete_weekly_channels", description="Admin: delete matchup channels for a specific week")
         @app_commands.choices(phase=[
             app_commands.Choice(name="Preseason", value="preseason"),
             app_commands.Choice(name="Regular Season", value="regular"),
@@ -2732,36 +2763,78 @@ class NexusLeagueBot(discord.Client):
             interaction: discord.Interaction,
             week: int,
             phase: app_commands.Choice[str] | None = None,
+            category_name: str | None = None,
+            dry_run: bool = True,
+            confirm: bool = False,
         ) -> None:
+            """Delete matchup channels for *week* inside the target category.
+
+            Requires ``confirm=True`` AND ``dry_run=False`` to actually delete.
+            The default ``dry_run=True`` always previews without deleting.
+            Only channels inside the target category are eligible.
+            """
             if not interaction.guild or not await self.user_is_admin(interaction):
-                await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+                await interaction.response.send_message(
+                    "You do not have permission to use this command.", ephemeral=True
+                )
                 return
             if week < 1:
                 await interaction.response.send_message("Week must be 1 or higher.", ephemeral=True)
                 return
             await interaction.response.defer(ephemeral=True)
+
             guild = interaction.guild
             phase_value = phase.value if phase else "regular"
-            matched = match_weekly_channel_names(
-                [ch for cat in guild.categories for ch in cat.channels],
-                week,
-                phase_value,
-            )
-            if not matched:
-                await interaction.followup.send(f"No matching channels found for week {week}.", ephemeral=True)
+            phase_info = format_phase_labels(phase_value, week)
+            target_category_name = category_name or phase_info["category"]
+
+            category = discord.utils.get(guild.categories, name=target_category_name)
+            if category is None:
+                await interaction.followup.send(
+                    f"Category **{target_category_name}** not found in this server.", ephemeral=True
+                )
                 return
-            deleted: list[str] = []
-            for ch in matched:
-                try:
-                    await ch.delete(reason=f"Deleted by delete_weekly_channels for week {week}")
-                    deleted.append(ch.name)
-                    await asyncio.sleep(0.5)
-                except discord.HTTPException:
-                    pass
-            await interaction.followup.send(
-                f"Deleted {len(deleted)} channel(s): " + ", ".join(deleted[:20]),
-                ephemeral=True,
+
+            matched = match_weekly_channel_names(
+                list(category.text_channels), week, phase_value
             )
+
+            if not matched:
+                await interaction.followup.send(
+                    f"No matching channels found in **{target_category_name}** for Week {week} ({phase_info['display']}).",
+                    ephemeral=True,
+                )
+                return
+
+            actually_delete = not dry_run and confirm
+            deleted: list[str] = []
+            failed: list[str] = []
+
+            if actually_delete:
+                for ch in matched:
+                    try:
+                        await ch.delete(reason=f"delete_weekly_channels week={week} phase={phase_value}")
+                        deleted.append(ch.name)
+                        await asyncio.sleep(0.5)
+                    except discord.HTTPException as exc:
+                        LOGGER.warning("Failed to delete channel %s: %s", ch.name, exc)
+                        failed.append(ch.name)
+            else:
+                deleted = [ch.name for ch in matched]
+
+            mode_label = "DRY RUN — no channels were deleted" if not actually_delete else "DELETED"
+            lines = [
+                f"**{mode_label}** | Week {week} ({phase_info['display']}) | category: **{target_category_name}**",
+            ]
+            label = "Would delete" if not actually_delete else "Deleted"
+            lines.append(f"\n**{label} ({len(deleted)}):**\n" + "\n".join(f"• {n}" for n in deleted[:40]))
+            if failed:
+                lines.append(f"\n**Failed to delete ({len(failed)}):**\n" + "\n".join(f"• {n}" for n in failed[:20]))
+            if not actually_delete and matched:
+                lines.append(
+                    "\n💡 To actually delete, run again with `dry_run: False` and `confirm: True`."
+                )
+            await interaction.followup.send("\n".join(lines), ephemeral=True)
 
         self.tree.add_command(setup_group)
         self.tree.add_command(leaders_group)
