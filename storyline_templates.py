@@ -35,6 +35,11 @@ def build_all_slot_candidates(
         out.extend(build_slot_candidates(t, slots))
     return out
 
+
+def _merge_pool(base: list[str], generated: list[str]) -> list[str]:
+    """Return *base* + *generated* with duplicates removed, preserving order."""
+    return list(dict.fromkeys(base + generated))
+
 # ---------------------------------------------------------------------------
 # MATCHUP ANGLES  (content_type: "matchup_angle")
 # Plain strings – the narrative lens for a game.
@@ -113,7 +118,7 @@ MATCHUP_ANGLES_GENERATED: list[str] = build_all_slot_candidates(
     _ANGLE_SLOT_TEMPLATES,
     {"modifier": _ANGLE_MODIFIERS, "context": _ANGLE_CONTEXTS},
 )
-MATCHUP_ANGLES = list(dict.fromkeys(MATCHUP_ANGLES + MATCHUP_ANGLES_GENERATED))
+MATCHUP_ANGLES = _merge_pool(MATCHUP_ANGLES, MATCHUP_ANGLES_GENERATED)
 
 # ---------------------------------------------------------------------------
 # MATCHUP OPENERS  (content_type: "matchup_opener")
@@ -245,7 +250,7 @@ MATCHUP_OPENERS_GENERATED: list[str] = build_all_slot_candidates(
     _OPENER_SLOT_TEMPLATES,
     {"lead": _OPENER_LEADS, "descriptor": _OPENER_DESCRIPTORS},
 )
-MATCHUP_OPENERS = list(dict.fromkeys(MATCHUP_OPENERS + MATCHUP_OPENERS_GENERATED))
+MATCHUP_OPENERS = _merge_pool(MATCHUP_OPENERS, MATCHUP_OPENERS_GENERATED)
 
 # ---------------------------------------------------------------------------
 # MATCHUP BODIES  (content_type: "matchup_body")
@@ -381,7 +386,7 @@ MATCHUP_BODIES_GENERATED: list[str] = build_all_slot_candidates(
     _BODY_SLOT_TEMPLATES,
     {"setup": _BODY_SETUPS, "payoff": _BODY_PAYOFFS},
 )
-MATCHUP_BODIES = list(dict.fromkeys(MATCHUP_BODIES + MATCHUP_BODIES_GENERATED))
+MATCHUP_BODIES = _merge_pool(MATCHUP_BODIES, MATCHUP_BODIES_GENERATED)
 
 # ---------------------------------------------------------------------------
 # MATCHUP STAKES  (content_type: "matchup_stakes")
@@ -533,7 +538,7 @@ MATCHUP_STAKES_GENERATED: list[str] = build_all_slot_candidates(
     _STAKES_SLOT_TEMPLATES[4:5],
     {"benefit": _STAKES_BENEFITS, "cost": _STAKES_COSTS},
 )
-MATCHUP_STAKES = list(dict.fromkeys(MATCHUP_STAKES + MATCHUP_STAKES_GENERATED))
+MATCHUP_STAKES = _merge_pool(MATCHUP_STAKES, MATCHUP_STAKES_GENERATED)
 
 # ---------------------------------------------------------------------------
 # PLAYER WHY LINES – PASSING  (content_type: "player_why_passing")
@@ -676,7 +681,7 @@ PLAYER_WHY_PASSING_GENERATED: list[str] = build_all_slot_candidates(
     ["{{first}}'s {attribute} transforms {{team_name}}'s {role} into a decisive weapon."],
     {"attribute": _PASSING_ATTRIBUTES, "role": _PASSING_ROLES},
 )
-PLAYER_WHY_PASSING = list(dict.fromkeys(PLAYER_WHY_PASSING + PLAYER_WHY_PASSING_GENERATED))
+PLAYER_WHY_PASSING = _merge_pool(PLAYER_WHY_PASSING, PLAYER_WHY_PASSING_GENERATED)
 
 # ---------------------------------------------------------------------------
 # PLAYER WHY LINES – RUSHING  (content_type: "player_why_rushing")
@@ -815,7 +820,7 @@ PLAYER_WHY_RUSHING_GENERATED: list[str] = build_all_slot_candidates(
     ["{{first}}'s {attribute} combined with {{team_name}}'s {role} scheme creates an unstoppable ground game."],
     {"attribute": _RUSHING_ATTRIBUTES, "role": _RUSHING_ROLES},
 )
-PLAYER_WHY_RUSHING = list(dict.fromkeys(PLAYER_WHY_RUSHING + PLAYER_WHY_RUSHING_GENERATED))
+PLAYER_WHY_RUSHING = _merge_pool(PLAYER_WHY_RUSHING, PLAYER_WHY_RUSHING_GENERATED)
 
 # ---------------------------------------------------------------------------
 # PLAYER WHY LINES – DEFENSE  (content_type: "player_why_defense")
@@ -954,7 +959,7 @@ PLAYER_WHY_DEFENSE_GENERATED: list[str] = build_all_slot_candidates(
     ["{{first}}'s {attribute} elevates {{team_name}}'s {role} scheme to a different level."],
     {"attribute": _DEFENSE_ATTRIBUTES, "role": _DEFENSE_ROLES},
 )
-PLAYER_WHY_DEFENSE = list(dict.fromkeys(PLAYER_WHY_DEFENSE + PLAYER_WHY_DEFENSE_GENERATED))
+PLAYER_WHY_DEFENSE = _merge_pool(PLAYER_WHY_DEFENSE, PLAYER_WHY_DEFENSE_GENERATED)
 
 # ---------------------------------------------------------------------------
 # PROFILE PHRASES – contender  (content_type: "profile_contender")
@@ -1172,7 +1177,7 @@ PROFILE_CONTENDER_GENERATED: list[str] = build_all_slot_candidates(
     ["{adverb} {action}"],
     {"adverb": _PROFILE_ADVERBS, "action": _PROFILE_CONTENDER_ACTIONS},
 )
-PROFILE_CONTENDER = list(dict.fromkeys(PROFILE_CONTENDER + PROFILE_CONTENDER_GENERATED))
+PROFILE_CONTENDER = _merge_pool(PROFILE_CONTENDER, PROFILE_CONTENDER_GENERATED)
 
 _PROFILE_STRUGGLING_ACTIONS: list[str] = [
     "searching for answers on both sides of the ball",
@@ -1196,7 +1201,7 @@ PROFILE_STRUGGLING_GENERATED: list[str] = build_all_slot_candidates(
     ["{action} — {feeling}"],
     {"action": _PROFILE_STRUGGLING_ACTIONS, "feeling": _PROFILE_STRUGGLING_FEELINGS},
 )
-PROFILE_STRUGGLING = list(dict.fromkeys(PROFILE_STRUGGLING + PROFILE_STRUGGLING_GENERATED))
+PROFILE_STRUGGLING = _merge_pool(PROFILE_STRUGGLING, PROFILE_STRUGGLING_GENERATED)
 
 _PROFILE_TURNOVER_DEGREES: list[str] = [
     "consistently", "dominantly", "impressively", "at a league-leading clip",
@@ -1213,7 +1218,7 @@ PROFILE_TURNOVER_GENERATED: list[str] = build_all_slot_candidates(
     ["Turning defensive stops into {result} at a {degree} rate"],
     {"result": _PROFILE_TURNOVER_RESULTS, "degree": _PROFILE_TURNOVER_DEGREES},
 )
-PROFILE_TURNOVER = list(dict.fromkeys(PROFILE_TURNOVER + PROFILE_TURNOVER_GENERATED))
+PROFILE_TURNOVER = _merge_pool(PROFILE_TURNOVER, PROFILE_TURNOVER_GENERATED)
 
 _PROFILE_OFFENSE_ADVERBS: list[str] = [
     "consistently", "explosively", "efficiently", "relentlessly",
@@ -1234,7 +1239,7 @@ PROFILE_OFFENSE_GENERATED: list[str] = build_all_slot_candidates(
     ["The offense is {adverb} {action} — and the points follow"],
     {"adverb": _PROFILE_OFFENSE_ADVERBS, "action": _PROFILE_OFFENSE_ACTIONS},
 )
-PROFILE_OFFENSE = list(dict.fromkeys(PROFILE_OFFENSE + PROFILE_OFFENSE_GENERATED))
+PROFILE_OFFENSE = _merge_pool(PROFILE_OFFENSE, PROFILE_OFFENSE_GENERATED)
 
 _PROFILE_DEFENSE_ADVERBS: list[str] = [
     "consistently", "stingily", "dominantly", "efficiently",
@@ -1259,7 +1264,7 @@ PROFILE_DEFENSE_GENERATED: list[str] = build_all_slot_candidates(
     ["The defense is {adverb} {action} — and wins follow"],
     {"adverb": _PROFILE_DEFENSE_ADVERBS, "action": _PROFILE_DEFENSE_ACTIONS},
 )
-PROFILE_DEFENSE = list(dict.fromkeys(PROFILE_DEFENSE + PROFILE_DEFENSE_GENERATED))
+PROFILE_DEFENSE = _merge_pool(PROFILE_DEFENSE, PROFILE_DEFENSE_GENERATED)
 
 _PROFILE_NEUTRAL_ADVERBS: list[str] = [
     "consistently", "earnestly", "steadily", "patiently",
@@ -1281,7 +1286,7 @@ PROFILE_NEUTRAL_GENERATED: list[str] = build_all_slot_candidates(
     ["Competing {adverb} but still searching for the {x_factor} that turns losses into wins"],
     {"adverb": _PROFILE_NEUTRAL_ADVERBS, "x_factor": _PROFILE_NEUTRAL_X_FACTORS},
 )
-PROFILE_NEUTRAL = list(dict.fromkeys(PROFILE_NEUTRAL + PROFILE_NEUTRAL_GENERATED))
+PROFILE_NEUTRAL = _merge_pool(PROFILE_NEUTRAL, PROFILE_NEUTRAL_GENERATED)
 
 # ---------------------------------------------------------------------------
 # WEEKLY NEWS OPENERS  (content_type: "weekly_news_opener")
@@ -1390,7 +1395,7 @@ WEEKLY_NEWS_OPENERS_GENERATED: list[str] = build_all_slot_candidates(
     ["Week {{week}} {verb} — {context}."],
     {"verb": _NEWS_OPENER_VERBS, "context": _NEWS_OPENER_CONTEXTS},
 )
-WEEKLY_NEWS_OPENERS = list(dict.fromkeys(WEEKLY_NEWS_OPENERS + WEEKLY_NEWS_OPENERS_GENERATED))
+WEEKLY_NEWS_OPENERS = _merge_pool(WEEKLY_NEWS_OPENERS, WEEKLY_NEWS_OPENERS_GENERATED)
 
 # ---------------------------------------------------------------------------
 # WEEKLY NEWS BODY LINES  (content_type: "weekly_news_body")
@@ -1495,7 +1500,7 @@ WEEKLY_NEWS_BODY_GENERATED: list[str] = build_all_slot_candidates(
     ["{{top_team}} at the top is the story, but the {metric} battle defines the full Week {{week}} narrative."],
     {"metric": _NEWS_BODY_METRICS},
 )
-WEEKLY_NEWS_BODY_LINES = list(dict.fromkeys(WEEKLY_NEWS_BODY_LINES + WEEKLY_NEWS_BODY_GENERATED))
+WEEKLY_NEWS_BODY_LINES = _merge_pool(WEEKLY_NEWS_BODY_LINES, WEEKLY_NEWS_BODY_GENERATED)
 
 # ---------------------------------------------------------------------------
 # HEADLINE TEMPLATES – line 1 (top team leader)  (content_type: "headline_line1")
@@ -1543,7 +1548,7 @@ HEADLINE_LINE1_GENERATED: list[str] = build_all_slot_candidates(
     ["The league's {descriptor} record belongs to {{top_team}} at {{top_record}}."],
     {"descriptor": _HL1_ADJ_DESCRIPTORS},
 )
-HEADLINE_LINE1 = list(dict.fromkeys(HEADLINE_LINE1 + HEADLINE_LINE1_GENERATED))
+HEADLINE_LINE1 = _merge_pool(HEADLINE_LINE1, HEADLINE_LINE1_GENERATED)
 
 # ---------------------------------------------------------------------------
 # HEADLINE TEMPLATES – line 3 (passing leader)  (content_type: "headline_line3")
@@ -1587,7 +1592,7 @@ HEADLINE_LINE3_GENERATED: list[str] = build_all_slot_candidates(
     ["{descriptor} {{pass_yards}} yards and {{pass_tds}} TDs, {{passer}} {verb} the passing race."],
     {"verb": _HL3_VERBS, "descriptor": _HL3_DESCRIPTORS},
 )
-HEADLINE_LINE3 = list(dict.fromkeys(HEADLINE_LINE3 + HEADLINE_LINE3_GENERATED))
+HEADLINE_LINE3 = _merge_pool(HEADLINE_LINE3, HEADLINE_LINE3_GENERATED)
 
 # ---------------------------------------------------------------------------
 # HEADLINE TEMPLATES – line 4 (rushing leader)  (content_type: "headline_line4")
@@ -1631,7 +1636,7 @@ HEADLINE_LINE4_GENERATED: list[str] = build_all_slot_candidates(
     ["{descriptor} {{rush_yards}} yards, {{rusher}} {verb} the rushing leaderboard."],
     {"verb": _HL4_VERBS, "descriptor": _HL4_DESCRIPTORS},
 )
-HEADLINE_LINE4 = list(dict.fromkeys(HEADLINE_LINE4 + HEADLINE_LINE4_GENERATED))
+HEADLINE_LINE4 = _merge_pool(HEADLINE_LINE4, HEADLINE_LINE4_GENERATED)
 
 # ---------------------------------------------------------------------------
 # HEADLINE TEMPLATES – line 5 (receiving leader)  (content_type: "headline_line5")
@@ -1675,4 +1680,4 @@ HEADLINE_LINE5_GENERATED: list[str] = build_all_slot_candidates(
     ["{descriptor} {{rec_yards}} yards and {{rec_tds}} TDs, {{receiver}} {verb} the receiving race."],
     {"verb": _HL5_VERBS, "descriptor": _HL5_DESCRIPTORS},
 )
-HEADLINE_LINE5 = list(dict.fromkeys(HEADLINE_LINE5 + HEADLINE_LINE5_GENERATED))
+HEADLINE_LINE5 = _merge_pool(HEADLINE_LINE5, HEADLINE_LINE5_GENERATED)
