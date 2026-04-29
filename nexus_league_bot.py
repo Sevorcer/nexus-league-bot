@@ -16,6 +16,28 @@ from discord import app_commands
 import psycopg
 from psycopg.rows import dict_row
 
+from storyline_templates import (
+    MATCHUP_ANGLES,
+    MATCHUP_OPENERS,
+    MATCHUP_BODIES,
+    MATCHUP_STAKES,
+    PLAYER_WHY_PASSING,
+    PLAYER_WHY_RUSHING,
+    PLAYER_WHY_DEFENSE,
+    PROFILE_CONTENDER,
+    PROFILE_STRUGGLING,
+    PROFILE_TURNOVER,
+    PROFILE_OFFENSE,
+    PROFILE_DEFENSE,
+    PROFILE_NEUTRAL,
+    WEEKLY_NEWS_OPENERS,
+    WEEKLY_NEWS_BODY_LINES,
+    HEADLINE_LINE1,
+    HEADLINE_LINE3,
+    HEADLINE_LINE4,
+    HEADLINE_LINE5,
+)
+
 
 logging.basicConfig(level=logging.INFO)
 LOGGER = logging.getLogger("nexus-league-bot")
@@ -88,6 +110,38 @@ def deterministic_choice(options: list[str], seed: str) -> str:
         return ""
     rng = random.Random(seed)
     return options[rng.randrange(len(options))]
+
+
+def choose_nonrepeating(
+    options: list[str],
+    seed: str,
+    content_type: str,
+    db: "Database",
+    guild_id: int,
+    league_id: int,
+    cooldown_limit: int = 500,
+) -> str:
+    """Pick from *options* avoiding recently used entries, then record the choice.
+
+    Queries the last *cooldown_limit* used content_keys for this
+    (guild_id, league_id, content_type) and tries to choose an option that
+    is not in that recent set.  Falls back to deterministic_choice when the
+    entire pool has been recently used.  Always records the chosen value.
+
+    If *db* is None or any DB operation fails, falls back silently to
+    deterministic_choice without recording.
+    """
+    if not options:
+        return ""
+    try:
+        recent = set(db.fetch_recent_content_keys(guild_id, league_id, content_type, cooldown_limit))
+        available = [o for o in options if o not in recent]
+        chosen = deterministic_choice(available if available else options, seed)
+        db.record_content_key(guild_id, league_id, content_type, chosen)
+        return chosen
+    except Exception as exc:
+        LOGGER.debug("choose_nonrepeating DB error (%s): %s – falling back", content_type, exc)
+        return deterministic_choice(options, seed)
 
 
 def slugify_channel_name(text: str) -> str:
@@ -223,17 +277,18 @@ def detect_profile_storyline(team_row: dict[str, Any]) -> str:
     points_against = safe_int(team_row.get("pts_against"))
     turnover_diff = safe_int(team_row.get("turnover_diff"))
 
+    seed = f"profile-{wins}-{losses}-{points_for}-{points_against}-{turnover_diff}"
     if wins >= losses + 4:
-        return "Rolling like a contender"
+        return deterministic_choice(PROFILE_CONTENDER, seed)
     if losses >= wins + 3:
-        return "Under pressure to stop the slide"
+        return deterministic_choice(PROFILE_STRUGGLING, seed)
     if turnover_diff >= 5:
-        return "Winning the possession battle lately"
+        return deterministic_choice(PROFILE_TURNOVER, seed)
     if points_for > points_against + 35:
-        return "Offense is carrying real momentum"
+        return deterministic_choice(PROFILE_OFFENSE, seed)
     if points_against < points_for - 20:
-        return "Defense is keeping them in every game"
-    return "Trying to build weekly momentum"
+        return deterministic_choice(PROFILE_DEFENSE, seed)
+    return deterministic_choice(PROFILE_NEUTRAL, seed)
 
 
 def build_team_storyline(team_row: dict[str, Any], leaders: dict[str, Any]) -> str:
@@ -430,6 +485,63 @@ class Database:
                     UNIQUE (trade_id, voter_user_id)
                 )
                 """
+            )
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bot_content_memory(
+                    id BIGSERIAL PRIMARY KEY,
+                    guild_id BIGINT NOT NULL,
+                    league_id INTEGER NOT NULL,
+                    content_type TEXT NOT NULL,
+                    content_key TEXT NOT NULL,
+                    used_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS bot_content_memory_lookup_idx "
+                "ON bot_content_memory (guild_id, league_id, content_type, used_at DESC)"
+            )
+
+            conn.commit()
+
+    def fetch_recent_content_keys(
+        self,
+        guild_id: int,
+        league_id: int,
+        content_type: str,
+        limit: int,
+    ) -> list[str]:
+        """Return the most recently used content_key values for this scope."""
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT content_key
+                FROM bot_content_memory
+                WHERE guild_id = %s AND league_id = %s AND content_type = %s
+                ORDER BY used_at DESC
+                LIMIT %s
+                """,
+                (guild_id, league_id, content_type, limit),
+            )
+            return [row["content_key"] for row in cur.fetchall()]
+
+    def record_content_key(
+        self,
+        guild_id: int,
+        league_id: int,
+        content_type: str,
+        content_key: str,
+    ) -> None:
+        """Insert a new usage record for the given content_key."""
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO bot_content_memory (guild_id, league_id, content_type, content_key)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (guild_id, league_id, content_type, content_key),
             )
             conn.commit()
 
@@ -1384,14 +1496,8 @@ def call_openai_text(
     raise RuntimeError("OpenAI returned no text output")
 
 
-MATCHUP_ANGLES = [
-    "marquee showdown",
-    "prove-it test",
-    "style clash",
-    "turnover battle",
-    "quarterback-vs-pass-rush",
-    "playoff pressure",
-]
+
+# MATCHUP_ANGLES is imported from storyline_templates
 
 
 def format_player_stats_line(entry: dict[str, Any], category: str) -> str:
@@ -1417,31 +1523,42 @@ def format_player_stats_line(entry: dict[str, Any], category: str) -> str:
     return ""
 
 
-def format_player_why_line(entry: dict[str, Any], category: str, team_name: str, game_id: int) -> str:
-    """Return a deterministic template snippet explaining why the player matters."""
+def format_player_why_line(
+    entry: dict[str, Any],
+    category: str,
+    team_name: str,
+    game_id: int,
+    db: "Database | None" = None,
+    guild_id: int = 0,
+    league_id: int = 0,
+) -> str:
+    """Return a template snippet explaining why the player matters.
+
+    Draws from the large per-category pools in storyline_templates.
+    Uses choose_nonrepeating when *db* is provided, otherwise falls back
+    to a deterministic choice.
+    """
     name = safe_text(entry.get("player_name"))
     first = name.split()[0] if name else "This player"
+    seed = f"why-{game_id}-{name}-{category}"
+
     if category == "passing":
-        options = [
-            f"{team_name} goes as {first} goes — their offense runs through his arm.",
-            f"When {first} is on, {team_name} controls the game; watch his turnover count.",
-            f"{first} is the engine of {team_name}'s offense and a key player to track.",
-        ]
+        raw_options = PLAYER_WHY_PASSING
+        content_type = "player_why_passing"
     elif category == "rushing":
-        options = [
-            f"{team_name}'s ground game is built around {first}'s legs this season.",
-            f"{first} sets the tone for {team_name}; a big rushing day opens the playbook.",
-            f"Everything starts for {team_name} when {first} can find running room.",
-        ]
+        raw_options = PLAYER_WHY_RUSHING
+        content_type = "player_why_rushing"
     elif category == "defense":
-        options = [
-            f"{first} is {team_name}'s disruptor — a turnover or pressure from him can flip the game.",
-            f"If {first} gets into the backfield early, {team_name} can control the line of scrimmage.",
-            f"{first} leads {team_name}'s defense; his presence creates problems for any offense.",
-        ]
+        raw_options = PLAYER_WHY_DEFENSE
+        content_type = "player_why_defense"
     else:
-        options = [f"{first} is a key contributor for {team_name} this season."]
-    return deterministic_choice(options, f"why-{game_id}-{name}-{category}")
+        return f"{first} is a key contributor for {team_name} this season."
+
+    if db is not None and guild_id and league_id:
+        template = choose_nonrepeating(raw_options, seed, content_type, db, guild_id, league_id)
+    else:
+        template = deterministic_choice(raw_options, seed)
+    return template.format(first=first, team_name=team_name)
 
 
 def build_matchup_prompt(facts: dict[str, Any]) -> str:
@@ -1457,7 +1574,13 @@ def build_matchup_prompt(facts: dict[str, Any]) -> str:
     )
 
 
-def build_matchup_facts(db: Database, league_id: int, game_row: dict[str, Any], is_gotw: bool) -> dict[str, Any]:
+def build_matchup_facts(
+    db: Database,
+    league_id: int,
+    game_row: dict[str, Any],
+    is_gotw: bool,
+    guild_id: int = 0,
+) -> dict[str, Any]:
     away_team = db.fetch_team_info_by_id(league_id, safe_int(game_row.get("away_team_id"))) or {
         "team_name": game_row.get("away_team", "Away Team"),
         "wins": safe_int(game_row.get("away_wins")),
@@ -1496,18 +1619,25 @@ def build_matchup_facts(db: Database, league_id: int, game_row: dict[str, Any], 
         angle = "style clash"
 
     week = safe_int(game_row.get("week_number"))
-    if week:
-        used = _WEEKS_MEMORY["angles"][week]
-        if angle in used:
-            for candidate in MATCHUP_ANGLES:
-                if candidate not in used:
-                    angle = candidate
-                    break
-        used.append(angle)
+    game_id = safe_int(game_row.get("game_id"))
+    angle_seed = f"angle-{game_id}-{angle}"
 
-    facts = {
+    if guild_id and league_id:
+        angle = choose_nonrepeating(MATCHUP_ANGLES, angle_seed, "matchup_angle", db, guild_id, league_id)
+    else:
+        # Legacy in-memory fallback
+        if week:
+            used = _WEEKS_MEMORY["angles"][week]
+            if angle in used:
+                for candidate in MATCHUP_ANGLES:
+                    if candidate not in used:
+                        angle = candidate
+                        break
+            used.append(angle)
+
+    facts: dict[str, Any] = {
         "week": week,
-        "game_id": safe_int(game_row.get("game_id")),
+        "game_id": game_id,
         "is_gotw": bool(is_gotw),
         "angle": angle,
         "away_team": away_team,
@@ -1542,41 +1672,53 @@ def build_matchup_facts(db: Database, league_id: int, game_row: dict[str, Any], 
                     "team_name": team_name,
                     "category": category,
                     "stats_line": format_player_stats_line(entry, category),
-                    "why_line": format_player_why_line(entry, category, team_name, facts["game_id"]),
+                    "why_line": format_player_why_line(
+                        entry, category, team_name, game_id,
+                        db=db, guild_id=guild_id, league_id=league_id,
+                    ),
                 })
                 break
     facts["players_to_watch"] = picks[:2]
 
-    facts["stakes_line"] = deterministic_choice(
-        [
-            "This one has direct leverage on the playoff picture and weekly momentum.",
-            "The winner grabs valuable room in the standings race while the loser absorbs pressure.",
-            "A result here can quickly change perception and seeding paths across the league.",
-        ],
-        f"stakes-{facts['game_id']}",
-    )
+    stakes_seed = f"stakes-{game_id}"
+    if guild_id and league_id:
+        facts["stakes_line"] = choose_nonrepeating(
+            MATCHUP_STAKES, stakes_seed, "matchup_stakes", db, guild_id, league_id
+        )
+    else:
+        facts["stakes_line"] = deterministic_choice(MATCHUP_STAKES, stakes_seed)
     return facts
 
 
-def template_matchup_preview_text(facts: dict[str, Any]) -> str:
+def template_matchup_preview_text(
+    facts: dict[str, Any],
+    db: "Database | None" = None,
+    guild_id: int = 0,
+    league_id: int = 0,
+) -> str:
     away_name = safe_text(facts["away_team"].get("team_name"))
     home_name = safe_text(facts["home_team"].get("team_name"))
     week = safe_int(facts.get("week"))
-    opener = deterministic_choice(
-        [
-            f"Week {week} puts {away_name} and {home_name} into a {facts['angle']} that should carry real weight.",
-            f"The {away_name} and {home_name} enter Week {week} with a matchup profile that feels like {facts['angle']}.",
-        ],
-        f"open-{facts['game_id']}",
-    )
-    body = deterministic_choice(
-        [
-            facts.get("away_storyline", ""),
-            facts.get("home_storyline", ""),
-            f"This game should reveal which team can keep its identity intact under pressure.",
-        ],
-        f"body-{facts['game_id']}",
-    )
+    game_id = safe_int(facts.get("game_id"))
+    angle = safe_text(facts.get("angle"))
+
+    opener_seed = f"open-{game_id}"
+    body_seed = f"body-{game_id}"
+
+    if db is not None and guild_id and league_id:
+        opener_template = choose_nonrepeating(
+            MATCHUP_OPENERS, opener_seed, "matchup_opener", db, guild_id, league_id
+        )
+        body_template = choose_nonrepeating(
+            MATCHUP_BODIES, body_seed, "matchup_body", db, guild_id, league_id
+        )
+    else:
+        opener_template = deterministic_choice(MATCHUP_OPENERS, opener_seed)
+        body_template = deterministic_choice(MATCHUP_BODIES, body_seed)
+
+    opener = opener_template.format(week=week, away=away_name, home=home_name, angle=angle)
+    body = body_template.format(away=away_name, home=home_name, week=week)
+
     players = facts.get("players_to_watch") or []
 
     def _player_display(p: Any) -> str:
@@ -1601,8 +1743,9 @@ async def generate_matchup_preview_text(
     is_gotw: bool,
     guild_id: int | None = None,
 ) -> tuple[str, bool, dict[str, Any]]:
-    facts = await asyncio.to_thread(build_matchup_facts, db, league_id, game_row, is_gotw)
-    fallback = template_matchup_preview_text(facts)
+    _guild_id = guild_id or 0
+    facts = await asyncio.to_thread(build_matchup_facts, db, league_id, game_row, is_gotw, _guild_id)
+    fallback = template_matchup_preview_text(facts, db=db, guild_id=_guild_id, league_id=league_id)
     if not resolve_openai_api_key(config, guild_id):
         return fallback, False, facts
     try:
@@ -1626,19 +1769,36 @@ def build_weekly_news_prompt(facts: dict[str, Any]) -> str:
     )
 
 
-def template_weekly_news_text(facts: dict[str, Any]) -> str:
+def template_weekly_news_text(
+    facts: dict[str, Any],
+    db: "Database | None" = None,
+    guild_id: int = 0,
+    league_id: int = 0,
+) -> str:
     week = safe_int(facts.get("week"))
     top_team = safe_text((facts.get("standings") or [{}])[0].get("team_name"), "the top seed")
     game = (facts.get("top_games") or [{}])[0]
     away = safe_text(game.get("away_team"), "Away Team")
     home = safe_text(game.get("home_team"), "Home Team")
-    return (
-        f"Week {week} is shaping the season fast, with {top_team} trying to protect position while challengers close in. "
-        f"The headline matchup this week is {away} at {home}, a game that could swing both momentum and seeding pressure. "
-        "Across the board, teams are being forced to prove whether their records match their long-term ceiling. "
-        "Stat races are tightening, and every result is beginning to carry playoff context. "
-        "This slate feels like one that can redraw how the league is discussed next week."
-    )
+
+    opener_seed = f"news-open-{week}-{top_team}"
+    body_seed = f"news-body-{week}-{away}-{home}"
+    fmt = {"week": week, "top_team": top_team, "away": away, "home": home}
+
+    if db is not None and guild_id and league_id:
+        opener_template = choose_nonrepeating(
+            WEEKLY_NEWS_OPENERS, opener_seed, "weekly_news_opener", db, guild_id, league_id
+        )
+        body_template = choose_nonrepeating(
+            WEEKLY_NEWS_BODY_LINES, body_seed, "weekly_news_body", db, guild_id, league_id
+        )
+    else:
+        opener_template = deterministic_choice(WEEKLY_NEWS_OPENERS, opener_seed)
+        body_template = deterministic_choice(WEEKLY_NEWS_BODY_LINES, body_seed)
+
+    opener = opener_template.format(**fmt)
+    body = body_template.format(**fmt)
+    return " ".join([opener, body]).strip()
 
 
 def find_closest_division_race(standings: list[dict[str, Any]]) -> str:
@@ -1677,15 +1837,56 @@ def build_headline_prompt(facts: dict[str, Any]) -> str:
     return HEADLINE_PROMPT_INSTRUCTIONS + "Facts JSON:\n" + json.dumps(facts, indent=2, default=str)
 
 
-def template_headline_text(facts: dict[str, Any]) -> str:
+def template_headline_text(
+    facts: dict[str, Any],
+    db: "Database | None" = None,
+    guild_id: int = 0,
+    league_id: int = 0,
+) -> str:
+    week = facts.get("week", "")
+    top_team = facts["top_team"]
+    top_record = facts["top_record"]
+    passer = facts["passer"]
+    pass_yards = facts["pass_yards"]
+    pass_tds = facts["pass_tds"]
+    rusher = facts["rusher"]
+    rush_yards = facts["rush_yards"]
+    receiver = facts["receiver"]
+    rec_yards = facts["rec_yards"]
+    rec_tds = facts["rec_tds"]
+    td_leader = facts["td_leader"]
+    total_tds = facts["total_tds"]
+    scores_summary = facts["scores_summary"]
+    closest_race = facts["closest_race"]
+
+    seed_base = f"headline-{week}-{top_team}"
+
+    def _pick(pool: list[str], ctype: str, seed: str) -> str:
+        if db is not None and guild_id and league_id:
+            return choose_nonrepeating(pool, seed, ctype, db, guild_id, league_id)
+        return deterministic_choice(pool, seed)
+
+    line1 = _pick(HEADLINE_LINE1, "headline_line1", f"{seed_base}-l1").format(
+        top_team=top_team, top_record=top_record
+    )
+    line3 = _pick(HEADLINE_LINE3, "headline_line3", f"{seed_base}-l3").format(
+        passer=passer, pass_yards=pass_yards, pass_tds=pass_tds
+    )
+    line4 = _pick(HEADLINE_LINE4, "headline_line4", f"{seed_base}-l4").format(
+        rusher=rusher, rush_yards=rush_yards
+    )
+    line5 = _pick(HEADLINE_LINE5, "headline_line5", f"{seed_base}-l5").format(
+        receiver=receiver, rec_yards=rec_yards, rec_tds=rec_tds
+    )
+
     return "\n".join(
         [
-            f"1. {facts['top_team']} leads the league at {facts['top_record']}, setting the pace in the standings race.",
-            f"2. {facts['closest_race']}",
-            f"3. {facts['passer']} is the top passer with {facts['pass_yards']} yards and {facts['pass_tds']} touchdowns.",
-            f"4. {facts['rusher']} leads all rushers with {facts['rush_yards']} yards on the ground.",
-            f"5. {facts['receiver']} tops the receiving charts with {facts['rec_yards']} yards and {facts['rec_tds']} touchdowns.",
-            f"6. {facts['td_leader']} leads the league in total touchdowns with {facts['total_tds']}. Week {facts['week']} is complete — {facts['scores_summary']}",
+            f"1. {line1}",
+            f"2. {closest_race}",
+            f"3. {line3}",
+            f"4. {line4}",
+            f"5. {line5}",
+            f"6. {td_leader} leads the league in total touchdowns with {total_tds}. Week {week} is complete — {scores_summary}",
         ]
     )
 
@@ -2290,7 +2491,9 @@ class NexusLeagueBot(discord.Client):
                 "top_games": top_games,
                 "gotw_pick": gotw_entry,
             }
-            fallback = template_weekly_news_text(facts)
+            fallback = template_weekly_news_text(
+                facts, db=self.db, guild_id=interaction.guild.id, league_id=league_id
+            )
             used_ai = False
             article = fallback
             if resolve_openai_api_key(cfg, interaction.guild.id):
@@ -2901,7 +3104,12 @@ class NexusLeagueBot(discord.Client):
             "week": week if week is not None else "N/A",
             "scores_summary": scores_summary,
         }
-        headline_text = template_headline_text(facts)
+        headline_text = template_headline_text(
+            facts,
+            db=self.db,
+            guild_id=interaction.guild.id if interaction.guild else 0,
+            league_id=league_id or 0,
+        )
         used_ai = False
 
         guild_id = interaction.guild.id if interaction.guild else None
