@@ -182,6 +182,17 @@ def format_phase_labels(phase: str | None, week: int) -> dict[str, str]:
     }
 
 
+def match_weekly_channel_names(
+    channels: list[discord.TextChannel | discord.VoiceChannel],
+    week: int,
+    phase: str | None = None,
+) -> list[discord.TextChannel | discord.VoiceChannel]:
+    """Return channels whose names match the prefix for a given week/phase."""
+    info = format_phase_labels(phase, week)
+    prefix = info["prefix"]
+    return [ch for ch in channels if ch.name.startswith(prefix)]
+
+
 def _parse_channel_ids(raw: str | None) -> set[int]:
     values: set[int] = set()
     for part in (raw or "").split(","):
@@ -270,7 +281,12 @@ def dev_trait_label(value: Any) -> str:
         return str(value)
 
 
-def detect_profile_storyline(team_row: dict[str, Any]) -> str:
+def detect_profile_storyline(
+    team_row: dict[str, Any],
+    db: "Database | None" = None,
+    guild_id: int = 0,
+    league_id: int = 0,
+) -> str:
     wins = safe_int(team_row.get("wins"))
     losses = safe_int(team_row.get("losses"))
     points_for = safe_int(team_row.get("pts_for"))
@@ -279,19 +295,30 @@ def detect_profile_storyline(team_row: dict[str, Any]) -> str:
 
     seed = f"profile-{wins}-{losses}-{points_for}-{points_against}-{turnover_diff}"
     if wins >= losses + 4:
-        return deterministic_choice(PROFILE_CONTENDER, seed)
-    if losses >= wins + 3:
-        return deterministic_choice(PROFILE_STRUGGLING, seed)
-    if turnover_diff >= 5:
-        return deterministic_choice(PROFILE_TURNOVER, seed)
-    if points_for > points_against + 35:
-        return deterministic_choice(PROFILE_OFFENSE, seed)
-    if points_against < points_for - 20:
-        return deterministic_choice(PROFILE_DEFENSE, seed)
-    return deterministic_choice(PROFILE_NEUTRAL, seed)
+        pool, ctype = PROFILE_CONTENDER, "profile_contender"
+    elif losses >= wins + 3:
+        pool, ctype = PROFILE_STRUGGLING, "profile_struggling"
+    elif turnover_diff >= 5:
+        pool, ctype = PROFILE_TURNOVER, "profile_turnover"
+    elif points_for > points_against + 35:
+        pool, ctype = PROFILE_OFFENSE, "profile_offense"
+    elif points_against < points_for - 20:
+        pool, ctype = PROFILE_DEFENSE, "profile_defense"
+    else:
+        pool, ctype = PROFILE_NEUTRAL, "profile_neutral"
+
+    if db and guild_id and league_id:
+        return choose_nonrepeating(pool, seed, ctype, db, guild_id, league_id)
+    return deterministic_choice(pool, seed)
 
 
-def build_team_storyline(team_row: dict[str, Any], leaders: dict[str, Any]) -> str:
+def build_team_storyline(
+    team_row: dict[str, Any],
+    leaders: dict[str, Any],
+    db: "Database | None" = None,
+    guild_id: int = 0,
+    league_id: int = 0,
+) -> str:
     team_name = safe_text(team_row.get("team_name"), "Unknown Team")
     record = wins_losses_ties_text(team_row)
     pf = safe_int(team_row.get("pts_for"))
@@ -301,7 +328,7 @@ def build_team_storyline(team_row: dict[str, Any], leaders: dict[str, Any]) -> s
 
     lines = [
         f"{team_name} is {record}, with {pf} points scored, {pa} allowed, and a {turnover_diff:+d} turnover margin.",
-        detect_profile_storyline(team_row),
+        detect_profile_storyline(team_row, db=db, guild_id=guild_id, league_id=league_id),
     ]
     if seed:
         lines.append(f"They currently sit on the {seed} seed line.")
@@ -527,6 +554,29 @@ class Database:
             )
             return [row["content_key"] for row in cur.fetchall()]
 
+    def cleanup_content_memory(
+        self,
+        guild_id: int,
+        league_id: int,
+        content_type: str,
+        keep: int = 200,
+    ) -> None:
+        """Delete oldest rows beyond `keep` for the given content_type."""
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM bot_content_memory
+                WHERE id IN (
+                    SELECT id FROM bot_content_memory
+                    WHERE guild_id = %s AND league_id = %s AND content_type = %s
+                    ORDER BY used_at ASC
+                    OFFSET %s
+                )
+                """,
+                (guild_id, league_id, content_type, keep),
+            )
+            conn.commit()
+
     def record_content_key(
         self,
         guild_id: int,
@@ -544,6 +594,8 @@ class Database:
                 (guild_id, league_id, content_type, content_key),
             )
             conn.commit()
+        if random.random() < 0.05:  # ~5% chance to prune old rows and keep table size manageable
+            self.cleanup_content_memory(guild_id, league_id, content_type)
 
     def get_guild_config(self, guild_id: int) -> dict[str, Any] | None:
         with self.conn() as conn, conn.cursor() as cur:
@@ -1642,8 +1694,8 @@ def build_matchup_facts(
         "angle": angle,
         "away_team": away_team,
         "home_team": home_team,
-        "away_storyline": build_team_storyline(away_team, away_leaders),
-        "home_storyline": build_team_storyline(home_team, home_leaders),
+        "away_storyline": build_team_storyline(away_team, away_leaders, db=db, guild_id=guild_id, league_id=league_id),
+        "home_storyline": build_team_storyline(home_team, home_leaders, db=db, guild_id=guild_id, league_id=league_id),
         "players_to_watch": [],
         "headline": "",
         "stakes_line": "",
@@ -2658,6 +2710,47 @@ class NexusLeagueBot(discord.Client):
             if skipped_channels:
                 summary_lines.append("Skipped:\n" + "\n".join(f"• {name}" for name in skipped_channels[:20]))
             await interaction.followup.send("\n\n".join(summary_lines), ephemeral=True)
+
+        @self.tree.command(name="delete_weekly_channels", description="Admin: delete all matchup channels for a week")
+        @app_commands.choices(phase=[
+            app_commands.Choice(name="Preseason", value="preseason"),
+            app_commands.Choice(name="Regular Season", value="regular"),
+            app_commands.Choice(name="Postseason", value="postseason"),
+        ])
+        async def delete_weekly_channels(
+            interaction: discord.Interaction,
+            week: int,
+            phase: app_commands.Choice[str] | None = None,
+        ) -> None:
+            if not interaction.guild or not await self.user_is_admin(interaction):
+                await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+                return
+            if week < 1:
+                await interaction.response.send_message("Week must be 1 or higher.", ephemeral=True)
+                return
+            await interaction.response.defer(ephemeral=True)
+            guild = interaction.guild
+            phase_value = phase.value if phase else "regular"
+            matched = match_weekly_channel_names(
+                [ch for cat in guild.categories for ch in cat.channels],
+                week,
+                phase_value,
+            )
+            if not matched:
+                await interaction.followup.send(f"No matching channels found for week {week}.", ephemeral=True)
+                return
+            deleted: list[str] = []
+            for ch in matched:
+                try:
+                    await ch.delete(reason=f"Deleted by delete_weekly_channels for week {week}")
+                    deleted.append(ch.name)
+                    await asyncio.sleep(0.5)
+                except discord.HTTPException:
+                    pass
+            await interaction.followup.send(
+                f"Deleted {len(deleted)} channel(s): " + ", ".join(deleted[:20]),
+                ephemeral=True,
+            )
 
         self.tree.add_command(setup_group)
         self.tree.add_command(leaders_group)
