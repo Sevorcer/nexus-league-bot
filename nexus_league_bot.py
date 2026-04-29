@@ -96,6 +96,38 @@ def slugify_channel_name(text: str) -> str:
     return slug[:90] or "team"
 
 
+def format_phase_labels(phase: str, week: int) -> dict[str, str]:
+    """Return category name, channel prefix, and display label for a given phase and week.
+
+    Args:
+        phase: One of ``"preseason"``, ``"regular"``, or ``"postseason"``.
+               Any unrecognised value is treated as ``"regular"``.
+        week: The week number (1-based).
+
+    Returns:
+        A dict with keys ``"category"``, ``"prefix"``, and ``"display"``.
+    """
+    p = (phase or "regular").lower()
+    if p == "preseason":
+        return {
+            "category": f"Preseason Week {week} Games",
+            "prefix": f"pre-wk{week}",
+            "display": f"Preseason Week {week}",
+        }
+    if p == "postseason":
+        return {
+            "category": f"Postseason Week {week} Games",
+            "prefix": f"post-wk{week}",
+            "display": f"Postseason Week {week}",
+        }
+    # default: regular season
+    return {
+        "category": f"Week {week} Games",
+        "prefix": f"wk{week}",
+        "display": f"Week {week}",
+    }
+
+
 def _parse_channel_ids(raw: str | None) -> set[int]:
     values: set[int] = set()
     for part in (raw or "").split(","):
@@ -2228,9 +2260,15 @@ class NexusLeagueBot(discord.Client):
             await interaction.followup.send(f"Posted week {week} news in {news_channel.mention} ({'AI' if used_ai else 'template'} mode).", ephemeral=True)
 
         @self.tree.command(name="create_weekly_channels", description="Admin: create one matchup channel per game")
+        @app_commands.choices(phase=[
+            app_commands.Choice(name="Preseason", value="preseason"),
+            app_commands.Choice(name="Regular Season", value="regular"),
+            app_commands.Choice(name="Postseason", value="postseason"),
+        ])
         async def create_weekly_channels(
             interaction: discord.Interaction,
             week: int,
+            phase: app_commands.Choice[str] | None = None,
             category_name: str | None = None,
         ) -> None:
             if not interaction.guild or not await self.user_is_admin(interaction):
@@ -2249,7 +2287,9 @@ class NexusLeagueBot(discord.Client):
                 return
 
             guild = interaction.guild
-            category_title = category_name or f"Week {week} Games"
+            phase_value = phase.value if phase else "regular"
+            phase_info = format_phase_labels(phase_value, week)
+            category_title = category_name or phase_info["category"]
             existing_category = discord.utils.get(guild.categories, name=category_title)
             if existing_category is None:
                 existing_category = await guild.create_category(category_title)
@@ -2264,7 +2304,7 @@ class NexusLeagueBot(discord.Client):
                 is_gotw = safe_int(game.get("game_id")) in gotw_ids
                 away_team_name = safe_text(game.get("away_team"), "away")
                 home_team_name = safe_text(game.get("home_team"), "home")
-                base_name = f"wk{week}-{slugify_channel_name(away_team_name)}-vs-{slugify_channel_name(home_team_name)}"
+                base_name = f"{phase_info['prefix']}-{slugify_channel_name(away_team_name)}-vs-{slugify_channel_name(home_team_name)}"
                 channel_name = f"gotw-{base_name}" if is_gotw else base_name
                 channel_name = channel_name[:100]
 
@@ -2276,7 +2316,7 @@ class NexusLeagueBot(discord.Client):
                 channel = await guild.create_text_channel(
                     name=channel_name,
                     category=existing_category,
-                    topic=f"Game ID {safe_int(game.get('game_id'))} | Week {week}",
+                    topic=f"Game ID {safe_int(game.get('game_id'))} | {phase_info['display']}",
                 )
 
                 away_member = self.find_member_for_team(guild, away_team_name)
@@ -2289,7 +2329,7 @@ class NexusLeagueBot(discord.Client):
                     message_lines.extend(["🔥 **GAME OF THE WEEK** 🔥", ""])
                 message_lines.extend(
                     [
-                        f"🏈 **Week {week} Matchup**",
+                        f"🏈 **{phase_info['display']} Matchup**",
                         f"**Away:** {away_team_name}",
                         f"**Home:** {home_team_name}",
                         "",
@@ -2325,7 +2365,7 @@ class NexusLeagueBot(discord.Client):
 
                 created_channels.append(channel_name)
 
-            summary_lines = [f"Created {len(created_channels)} channel(s) in **{category_title}** for **Week {week}**."]
+            summary_lines = [f"Created {len(created_channels)} channel(s) in **{category_title}** for **{phase_info['display']}**."]
             if created_channels:
                 summary_lines.append("Created:\n" + "\n".join(f"• {name}" for name in created_channels[:20]))
             if skipped_channels:

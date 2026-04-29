@@ -54,7 +54,7 @@ python nexus_league_bot.py
 - `/forcetrade trade_id:<int> decision:<approve|deny> [reason]`
 - `/post_weekly_news week:<int> [phase] [gotw_pick:'Away @ Home'] [channel]`
 - `/post headline`
-- `/create_weekly_channels week:<int> [category_name]`
+- `/create_weekly_channels week:<int> [phase:<preseason|regular|postseason>] [category_name]`
 - `/xprank [user]`
 - `/xpleaderboard`
 - `/createbounty title:<string> reward:<number> description:<string>`
