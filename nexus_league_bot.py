@@ -750,9 +750,11 @@ class Database:
         with self.conn() as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT COALESCE(MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
+                SELECT ps.player_id,
+                       COALESCE(MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
                        SUM(COALESCE(ps.pass_yards, 0)) AS pass_yards,
-                       SUM(COALESCE(ps.pass_tds, 0)) AS pass_tds
+                       SUM(COALESCE(ps.pass_tds, 0)) AS pass_tds,
+                       SUM(COALESCE(ps.interceptions, 0)) AS interceptions
                 FROM playerstats ps
                 JOIN player p ON p.id = ps.player_id
                 WHERE p.team_id = %s AND ps.league_id = %s
@@ -765,7 +767,8 @@ class Database:
             passing = cur.fetchone() or {}
             cur.execute(
                 """
-                SELECT COALESCE(MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
+                SELECT ps.player_id,
+                       COALESCE(MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
                        SUM(COALESCE(ps.rush_yards, 0)) AS rush_yards,
                        SUM(COALESCE(ps.rush_tds, 0)) AS rush_tds
                 FROM playerstats ps
@@ -780,9 +783,12 @@ class Database:
             rushing = cur.fetchone() or {}
             cur.execute(
                 """
-                SELECT COALESCE(MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
+                SELECT ps.player_id,
+                       COALESCE(MAX(p.first_name || ' ' || p.last_name), 'Unknown') AS player_name,
                        SUM(COALESCE(ps.sacks, 0)) AS sacks,
                        SUM(COALESCE(ps.defensive_ints, 0)) AS defensive_ints,
+                       SUM(COALESCE(ps.tackles, 0)) AS tackles,
+                       SUM(COALESCE(ps.fumbles_forced, 0)) AS fumbles_forced,
                        SUM(COALESCE(ps.sacks, 0) + COALESCE(ps.defensive_ints, 0)) AS defensive_score
                 FROM playerstats ps
                 JOIN player p ON p.id = ps.player_id
@@ -1388,6 +1394,56 @@ MATCHUP_ANGLES = [
 ]
 
 
+def format_player_stats_line(entry: dict[str, Any], category: str) -> str:
+    """Return a compact season-to-date stats line for a player based on their category."""
+    if category == "passing":
+        yards = safe_int(entry.get("pass_yards"))
+        tds = safe_int(entry.get("pass_tds"))
+        ints = safe_int(entry.get("interceptions"))
+        return f"{yards:,} pass yds | {tds} TD | {ints} INT"
+    if category == "rushing":
+        yards = safe_int(entry.get("rush_yards"))
+        tds = safe_int(entry.get("rush_tds"))
+        return f"{yards:,} rush yds | {tds} TD"
+    if category == "defense":
+        tackles = safe_int(entry.get("tackles"))
+        sacks = safe_int(entry.get("sacks"))
+        ints = safe_int(entry.get("defensive_ints"))
+        ff = safe_int(entry.get("fumbles_forced"))
+        parts = [f"{tackles} tkl", f"{sacks} sck", f"{ints} INT"]
+        if ff:
+            parts.append(f"{ff} FF")
+        return " | ".join(parts)
+    return ""
+
+
+def format_player_why_line(entry: dict[str, Any], category: str, team_name: str, game_id: int) -> str:
+    """Return a deterministic template snippet explaining why the player matters."""
+    name = safe_text(entry.get("player_name"))
+    first = name.split()[0] if name else "This player"
+    if category == "passing":
+        options = [
+            f"{team_name} goes as {first} goes — their offense runs through his arm.",
+            f"When {first} is on, {team_name} controls the game; watch his turnover count.",
+            f"{first} is the engine of {team_name}'s offense and a key player to track.",
+        ]
+    elif category == "rushing":
+        options = [
+            f"{team_name}'s ground game is built around {first}'s legs this season.",
+            f"{first} sets the tone for {team_name}; a big rushing day opens the playbook.",
+            f"Everything starts for {team_name} when {first} can find running room.",
+        ]
+    elif category == "defense":
+        options = [
+            f"{first} is {team_name}'s disruptor — a turnover or pressure from him can flip the game.",
+            f"If {first} gets into the backfield early, {team_name} can control the line of scrimmage.",
+            f"{first} leads {team_name}'s defense; his presence creates problems for any offense.",
+        ]
+    else:
+        options = [f"{first} is a key contributor for {team_name} this season."]
+    return deterministic_choice(options, f"why-{game_id}-{name}-{category}")
+
+
 def build_matchup_prompt(facts: dict[str, Any]) -> str:
     return (
         "You are writing one matchup preview for a Madden franchise Discord.\n"
@@ -1471,14 +1527,24 @@ def build_matchup_facts(db: Database, league_id: int, game_row: dict[str, Any], 
         f"headline-{facts['game_id']}-{angle}",
     )
 
-    picks: list[str] = []
+    picks: list[dict[str, Any]] = []
     for leaders, team_name in [
         (away_leaders, safe_text(away_team.get("team_name"))),
         (home_leaders, safe_text(home_team.get("team_name"))),
     ]:
-        best = leaders.get("passing") or leaders.get("rushing") or leaders.get("defense")
-        if best and safe_text(best.get("player_name")):
-            picks.append(f"{best['player_name']} ({team_name})")
+        # Pick the most prominent stat category per team in priority order:
+        # passing → rushing → defense. Break after the first valid entry.
+        for category in ("passing", "rushing", "defense"):
+            entry = leaders.get(category) or {}
+            if safe_text(entry.get("player_name")):
+                picks.append({
+                    "player_name": safe_text(entry["player_name"]),
+                    "team_name": team_name,
+                    "category": category,
+                    "stats_line": format_player_stats_line(entry, category),
+                    "why_line": format_player_why_line(entry, category, team_name, facts["game_id"]),
+                })
+                break
     facts["players_to_watch"] = picks[:2]
 
     facts["stakes_line"] = deterministic_choice(
@@ -1512,10 +1578,16 @@ def template_matchup_preview_text(facts: dict[str, Any]) -> str:
         f"body-{facts['game_id']}",
     )
     players = facts.get("players_to_watch") or []
+
+    def _player_display(p: Any) -> str:
+        if isinstance(p, dict):
+            return f"{p['player_name']} ({p['team_name']})"
+        return str(p)
+
     if len(players) > 1:
-        player_line = f"Players to watch include {players[0]} and {players[1]}."
+        player_line = f"Players to watch include {_player_display(players[0])} and {_player_display(players[1])}."
     elif players:
-        player_line = f"One player to watch is {players[0]}."
+        player_line = f"One player to watch is {_player_display(players[0])}."
     else:
         player_line = "Execution in key possessions will likely decide this."
     return " ".join([opener, body, player_line, facts.get("stakes_line", "")]).strip()
@@ -2358,7 +2430,19 @@ class NexusLeagueBot(discord.Client):
                         color=0x3498DB if not is_gotw else 0xF39C12,
                     )
                     if facts["players_to_watch"]:
-                        embed.add_field(name="Players to Watch", value="\n".join(f"• {item}" for item in facts["players_to_watch"]), inline=False)
+                        ptw_lines: list[str] = []
+                        for ptw in facts["players_to_watch"]:
+                            if isinstance(ptw, dict):
+                                header = f"**{ptw['player_name']}** ({ptw['team_name']})"
+                                entry_line = f"• {header}"
+                                if ptw.get("stats_line"):
+                                    entry_line += f"\n  📊 {ptw['stats_line']}"
+                                if ptw.get("why_line"):
+                                    entry_line += f"\n  💡 {ptw['why_line']}"
+                                ptw_lines.append(entry_line)
+                            else:
+                                ptw_lines.append(f"• {ptw}")
+                        embed.add_field(name="Players to Watch", value="\n".join(ptw_lines), inline=False)
                     embed.add_field(name="Why It Matters", value=facts["stakes_line"], inline=False)
                     embed.set_footer(text="AI-assisted preview" if used_ai else "Template preview")
                     await channel.send(embed=embed)
