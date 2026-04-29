@@ -2763,77 +2763,80 @@ class NexusLeagueBot(discord.Client):
             interaction: discord.Interaction,
             week: int,
             phase: app_commands.Choice[str] | None = None,
-            category_name: str | None = None,
-            dry_run: bool = True,
             confirm: bool = False,
         ) -> None:
-            """Delete matchup channels for *week* inside the target category.
-
-            Requires ``confirm=True`` AND ``dry_run=False`` to actually delete.
-            The default ``dry_run=True`` always previews without deleting.
-            Only channels inside the target category are eligible.
-            """
             if not interaction.guild or not await self.user_is_admin(interaction):
-                await interaction.response.send_message(
-                    "You do not have permission to use this command.", ephemeral=True
-                )
+                await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
                 return
             if week < 1:
                 await interaction.response.send_message("Week must be 1 or higher.", ephemeral=True)
                 return
-            await interaction.response.defer(ephemeral=True)
 
-            guild = interaction.guild
             phase_value = phase.value if phase else "regular"
             phase_info = format_phase_labels(phase_value, week)
-            target_category_name = category_name or phase_info["category"]
+            target_category_name = phase_info["category"]
 
-            category = discord.utils.get(guild.categories, name=target_category_name)
-            if category is None:
-                await interaction.followup.send(
-                    f"Category **{target_category_name}** not found in this server.", ephemeral=True
+            if not confirm:
+                await interaction.response.send_message(
+                    f"About to delete channels for **{phase_info['display']}** in category **{target_category_name}**.\n"
+                    f"Re-run with `confirm: True` to proceed.",
+                    ephemeral=True,
                 )
                 return
 
-            matched = match_weekly_channel_names(
-                list(category.text_channels), week, phase_value
-            )
+            await interaction.response.defer(ephemeral=True)
+
+            guild = interaction.guild
+            category = discord.utils.get(guild.categories, name=target_category_name)
+            if category is None:
+                await interaction.followup.send(f"Category **{target_category_name}** not found in this server.", ephemeral=True)
+                return
+
+            matched = match_weekly_channel_names(list(category.text_channels), week, phase_value)
 
             if not matched:
+                # Still delete the category if it's empty (e.g., channels were manually deleted already)
+                if not category.channels:
+                    await category.delete(reason=f"delete_weekly_channels week={week} phase={phase_value} (category empty)")
+                    await interaction.followup.send(
+                        f"No matching channels found, but category **{target_category_name}** was empty and has been deleted.",
+                        ephemeral=True,
+                    )
+                    return
+
                 await interaction.followup.send(
                     f"No matching channels found in **{target_category_name}** for Week {week} ({phase_info['display']}).",
                     ephemeral=True,
                 )
                 return
 
-            actually_delete = not dry_run and confirm
             deleted: list[str] = []
             failed: list[str] = []
 
-            if actually_delete:
-                for ch in matched:
-                    try:
-                        await ch.delete(reason=f"delete_weekly_channels week={week} phase={phase_value}")
-                        deleted.append(ch.name)
-                        await asyncio.sleep(0.5)
-                    except discord.HTTPException as exc:
-                        LOGGER.warning("Failed to delete channel %s: %s", ch.name, exc)
-                        failed.append(ch.name)
-            else:
-                deleted = [ch.name for ch in matched]
+            for ch in matched:
+                try:
+                    await ch.delete(reason=f"delete_weekly_channels week={week} phase={phase_value}")
+                    deleted.append(ch.name)
+                    await asyncio.sleep(0.5)
+                except discord.HTTPException as exc:
+                    LOGGER.warning("Failed to delete channel %s: %s", ch.name, exc)
+                    failed.append(ch.name)
 
-            mode_label = "DRY RUN — no channels were deleted" if not actually_delete else "DELETED"
-            lines = [
-                f"**{mode_label}** | Week {week} ({phase_info['display']}) | category: **{target_category_name}**",
-            ]
-            label = "Would delete" if not actually_delete else "Deleted"
-            lines.append(f"\n**{label} ({len(deleted)}):**\n" + "\n".join(f"• {n}" for n in deleted[:40]))
+            category_deleted = False
+            try:
+                if not category.channels:
+                    await category.delete(reason=f"delete_weekly_channels week={week} phase={phase_value} (category cleanup)")
+                    category_deleted = True
+            except discord.HTTPException as exc:
+                LOGGER.warning("Failed to delete category %s: %s", target_category_name, exc)
+
+            lines = [f"Deleted **{len(deleted)}** channel(s) in **{target_category_name}** for **{phase_info['display']}**."]
+            if deleted:
+                lines.append("\nDeleted:\n" + "\n".join(f"• {n}" for n in deleted[:50]))
             if failed:
-                lines.append(f"\n**Failed to delete ({len(failed)}):**\n" + "\n".join(f"• {n}" for n in failed[:20]))
-            if not actually_delete and matched:
-                lines.append(
-                    "\n💡 To actually delete, run again with `dry_run: False` and `confirm: True`."
-                )
+                lines.append("\nFailed:\n" + "\n".join(f"• {n}" for n in failed[:25]))
+            lines.append(f"\nCategory deleted: **{'yes' if category_deleted else 'no'}**")
+
             await interaction.followup.send("\n".join(lines), ephemeral=True)
 
         self.tree.add_command(setup_group)
