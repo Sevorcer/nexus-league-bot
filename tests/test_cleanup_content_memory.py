@@ -71,7 +71,7 @@ class TestCleanupContentMemory(unittest.TestCase):
 
         with patch.object(db, "conn", return_value=mock_conn), \
              patch.object(db, "cleanup_content_memory", side_effect=fake_cleanup), \
-             patch("random.random", return_value=0.01):
+             patch("random.random", return_value=0.005):
             db.record_content_key(10, 20, "matchup_angle", "key-abc")
 
         self.assertEqual(len(cleanup_calls), 1)

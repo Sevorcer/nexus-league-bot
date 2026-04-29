@@ -187,7 +187,18 @@ def match_weekly_channel_names(
     week: int,
     phase: str | None = None,
 ) -> list[discord.TextChannel | discord.VoiceChannel]:
-    """Return channels whose names match the prefix for a given week/phase."""
+    """Return channels whose names start with the week/phase prefix.
+
+    Channel names are expected to follow the pattern ``{prefix}-{...}``.
+    The prefix is derived from *phase* and *week* via :func:`format_phase_labels`:
+
+    * ``"regular"`` (or ``None``) → ``wk{week}``  (e.g. ``wk6``)
+    * ``"preseason"``             → ``pre-wk{week}``
+    * ``"postseason"``            → ``post-wk{week}``
+
+    A trailing ``-`` is appended before matching so that, for example, prefix
+    ``wk6`` does **not** accidentally match channels named ``wk60-...``.
+    """
     info = format_phase_labels(phase, week)
     prefix = info["prefix"]
     return [ch for ch in channels if ch.name.startswith(prefix)]
@@ -594,7 +605,7 @@ class Database:
                 (guild_id, league_id, content_type, content_key),
             )
             conn.commit()
-        if random.random() < 0.05:  # ~5% chance to prune old rows and keep table size manageable
+        if random.random() < 0.01:  # ~1% chance to prune old rows and keep table size manageable
             self.cleanup_content_memory(guild_id, league_id, content_type)
 
     def get_guild_config(self, guild_id: int) -> dict[str, Any] | None:
