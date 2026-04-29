@@ -47,7 +47,7 @@ class TestFormatPhaseLabels(unittest.TestCase):
         self.assertEqual(result["display"], "Week 5")
 
     def test_none_defaults_to_regular(self):
-        result = format_phase_labels(None, 11)  # type: ignore[arg-type]
+        result = format_phase_labels(None, 11)
         self.assertEqual(result["category"], "Week 11 Games")
         self.assertEqual(result["prefix"], "wk11")
         self.assertEqual(result["display"], "Week 11")

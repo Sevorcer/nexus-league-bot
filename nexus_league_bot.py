@@ -96,12 +96,12 @@ def slugify_channel_name(text: str) -> str:
     return slug[:90] or "team"
 
 
-def format_phase_labels(phase: str, week: int) -> dict[str, str]:
+def format_phase_labels(phase: str | None, week: int) -> dict[str, str]:
     """Return category name, channel prefix, and display label for a given phase and week.
 
     Args:
         phase: One of ``"preseason"``, ``"regular"``, or ``"postseason"``.
-               Any unrecognised value is treated as ``"regular"``.
+               ``None`` or any unrecognised value is treated as ``"regular"``.
         week: The week number (1-based).
 
     Returns:
