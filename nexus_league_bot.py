@@ -1536,6 +1536,11 @@ def resolve_openai_api_key(config: dict[str, Any] | None = None, guild_id: int |
     return DEFAULT_OPENAI_API_KEY
 
 
+def _redact_key_like_strings(text: str) -> str:
+    """Replace API-key-like strings (prefix + many asterisks + suffix) with [REDACTED]."""
+    return re.sub(r'[A-Za-z0-9+/\-_]{4,}\*{10,}[A-Za-z0-9+/\-_]{2,}', '[REDACTED]', text)
+
+
 def call_openai_text(
     prompt: str,
     max_output_tokens: int = 220,
@@ -1565,7 +1570,7 @@ def call_openai_text(
             data = json.loads(response.read().decode("utf-8"))
     except urllib_error.HTTPError as exc:
         details = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"OpenAI HTTP {exc.code}: {details[:500]}")
+        raise RuntimeError(f"OpenAI HTTP {exc.code}: {_redact_key_like_strings(details[:500])}")
     except Exception as exc:
         raise RuntimeError(f"OpenAI request failed: {exc}")
 
@@ -2086,6 +2091,8 @@ class NexusLeagueBot(discord.Client):
         self.db = db
         self.tree = app_commands.CommandTree(self)
         self.guild_ids = guild_ids
+        # Idempotency guard: maps interaction_id -> monotonic timestamp for create_weekly_channels
+        self._active_create_channel_ids: dict[int, float] = {}
 
     async def setup_hook(self) -> None:
         setup_group = app_commands.Group(name="setup", description="Configure this server")
@@ -2640,6 +2647,30 @@ class NexusLeagueBot(discord.Client):
             phase: app_commands.Choice[str] | None = None,
             category_name: str | None = None,
         ) -> None:
+            phase_value = phase.value if phase else "regular"
+            LOGGER.info(
+                "create_weekly_channels: interaction_id=%s guild=%s week=%s phase=%s",
+                interaction.id,
+                interaction.guild_id,
+                week,
+                phase_value,
+            )
+
+            # Idempotency guard: ignore duplicate deliveries of the same interaction
+            _now = time.monotonic()
+            _TTL = 300.0
+            self._active_create_channel_ids = {
+                k: v for k, v in self._active_create_channel_ids.items() if _now - v < _TTL
+            }
+            if interaction.id in self._active_create_channel_ids:
+                LOGGER.warning(
+                    "create_weekly_channels: duplicate interaction %s suppressed (guild=%s)",
+                    interaction.id,
+                    interaction.guild_id,
+                )
+                return
+            self._active_create_channel_ids[interaction.id] = _now
+
             if not interaction.guild or not await self.user_is_admin(interaction):
                 await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
                 return
@@ -2656,7 +2687,6 @@ class NexusLeagueBot(discord.Client):
                 return
 
             guild = interaction.guild
-            phase_value = phase.value if phase else "regular"
             phase_info = format_phase_labels(phase_value, week)
             category_title = category_name or phase_info["category"]
             existing_category = discord.utils.get(guild.categories, name=category_title)
@@ -2676,6 +2706,15 @@ class NexusLeagueBot(discord.Client):
                 base_name = f"{phase_info['prefix']}-{slugify_channel_name(away_team_name)}-vs-{slugify_channel_name(home_team_name)}"
                 channel_name = f"gotw-{base_name}" if is_gotw else base_name
                 channel_name = channel_name[:100]
+
+                # Safety guard: only create channels that include the selected phase prefix
+                if not (channel_name.startswith(f"{phase_info['prefix']}-") or channel_name.startswith(f"gotw-{phase_info['prefix']}-")):
+                    LOGGER.warning(
+                        "create_weekly_channels: skipping channel '%s' — does not match phase prefix '%s'",
+                        channel_name,
+                        phase_info['prefix'],
+                    )
+                    continue
 
                 existing_channel = discord.utils.get(guild.text_channels, name=channel_name)
                 if existing_channel is not None:
@@ -3415,31 +3454,39 @@ class NexusLeagueBot(discord.Client):
         league_id = await self.get_league_id(interaction)
         if league_id is None:
             return
-        await interaction.response.defer(ephemeral=post_to_channel)
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=post_to_channel)
 
         if not interaction.guild:
             await interaction.followup.send("This command can only be used in a server.", ephemeral=True)
             return
 
-        cfg = (await asyncio.to_thread(self.db.get_guild_config, interaction.guild.id)) or {}
         try:
-            embed = await self._build_headline_embed(interaction.guild, league_id, cfg)
-        except ValueError:
-            await interaction.followup.send("No standings found.", ephemeral=True)
-            return
+            cfg = (await asyncio.to_thread(self.db.get_guild_config, interaction.guild.id)) or {}
+            try:
+                embed = await self._build_headline_embed(interaction.guild, league_id, cfg)
+            except ValueError:
+                await interaction.followup.send("No standings found.", ephemeral=True)
+                return
 
-        if not post_to_channel:
-            await interaction.followup.send(embed=embed)
-            return
+            if not post_to_channel:
+                await interaction.followup.send(embed=embed)
+                return
 
-        leaders_channel_id = safe_int(cfg.get("leaders_channel_id"))
-        channel = interaction.guild.get_channel(leaders_channel_id) if leaders_channel_id else None
-        if not isinstance(channel, discord.TextChannel):
-            await interaction.followup.send("Leaders channel is not configured. Use `/setup channels` first.", ephemeral=True)
-            return
+            leaders_channel_id = safe_int(cfg.get("leaders_channel_id"))
+            channel = interaction.guild.get_channel(leaders_channel_id) if leaders_channel_id else None
+            if not isinstance(channel, discord.TextChannel):
+                await interaction.followup.send("Leaders channel is not configured. Use `/setup channels` first.", ephemeral=True)
+                return
 
-        await channel.send(embed=embed)
-        await interaction.followup.send(f"Posted headlines to {channel.mention}.", ephemeral=True)
+            await channel.send(embed=embed)
+            await interaction.followup.send(f"Posted headlines to {channel.mention}.", ephemeral=True)
+        except Exception:
+            LOGGER.exception("Unhandled error in send_headline for guild %s", interaction.guild_id)
+            try:
+                await interaction.followup.send("An error occurred while generating headlines. Please try again.", ephemeral=True)
+            except Exception:
+                LOGGER.warning("Failed to send error followup in send_headline for guild %s", interaction.guild_id)
 
     async def send_player_search(self, interaction: discord.Interaction, name_query: str) -> None:
         league_id = await self.get_league_id(interaction)
