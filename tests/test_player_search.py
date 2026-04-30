@@ -136,19 +136,20 @@ class TestPlayerSearchSQLBuilding(unittest.TestCase):
         return executed_sql[0]
 
     def test_uses_specialized_table_when_present(self):
+        # player_receiving_stats is never used; receiving always comes from playerstats.
         sql = self._run_player_search(
             {
                 "player_passing_stats": True,
                 "player_rushing_stats": True,
-                "player_receiving_stats": True,
                 "player_defense_stats": True,
             }
         )
         self.assertIn("player_passing_stats", sql)
         self.assertIn("player_rushing_stats", sql)
-        self.assertIn("player_receiving_stats", sql)
+        self.assertNotIn("player_receiving_stats", sql)
         self.assertIn("player_defense_stats", sql)
-        self.assertNotIn("playerstats", sql)
+        # playerstats must appear for the receiving fallback
+        self.assertIn("playerstats", sql)
 
     def test_falls_back_when_receiving_missing(self):
         sql = self._run_player_search(

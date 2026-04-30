@@ -1127,7 +1127,6 @@ class Database:
         specialised ``player_*_stats`` tables that do not yet exist."""
         has_passing = self.table_exists("player_passing_stats")
         has_rushing = self.table_exists("player_rushing_stats")
-        has_receiving = self.table_exists("player_receiving_stats")
         has_defense = self.table_exists("player_defense_stats")
 
         params: list[Any] = []
@@ -1182,19 +1181,9 @@ class Database:
                 ) prs ON prs.roster_id = p.id AND prs.team_id = p.team_id"""
             params.append(league_id)
 
-        if has_receiving:
-            receiving_join = """
-                LEFT JOIN (
-                    SELECT roster_id,
-                           team_id,
-                           SUM(COALESCE(rec_yds, 0)) AS rec_yards,
-                           SUM(COALESCE(rec_tds, 0)) AS rec_tds,
-                           SUM(COALESCE(receptions, 0)) AS receptions
-                    FROM player_receiving_stats
-                    GROUP BY roster_id, team_id
-                ) prc ON prc.roster_id = p.id AND prc.team_id = p.team_id"""
-        else:
-            receiving_join = """
+        # player_receiving_stats does not exist in production; always source
+        # receiving totals from playerstats which has rec_yards/rec_tds/receptions.
+        receiving_join = """
                 LEFT JOIN (
                     SELECT ps.player_id AS roster_id,
                            p2.team_id,
@@ -1206,7 +1195,7 @@ class Database:
                     WHERE ps.league_id = %s
                     GROUP BY ps.player_id, p2.team_id
                 ) prc ON prc.roster_id = p.id AND prc.team_id = p.team_id"""
-            params.append(league_id)
+        params.append(league_id)
 
         if has_defense:
             defense_join = """
@@ -3587,35 +3576,42 @@ class NexusLeagueBot(discord.Client):
         if league_id is None:
             return
 
+        guild_id = interaction.guild_id
         try:
             players = await asyncio.to_thread(self.db.player_search, league_id, name_query)
-        except Exception as exc:
-            LOGGER.exception("player_search DB error for guild %s: %s", interaction.guild_id, exc)
-            await interaction.response.send_message(
-                "An error occurred while searching for players. Please try again later.",
-                ephemeral=True,
+
+            if not players:
+                await interaction.response.send_message("No players found.", ephemeral=True)
+                return
+
+            embed = discord.Embed(title=f"Player Search: {name_query}", color=discord.Color.teal())
+            for row in players:
+                name = player_display_name(row)
+                team = row.get("team_name") or "FA"
+                lines = [
+                    f"Team: {team}",
+                    f"Position: {row.get('position') or '-'} | OVR: {row.get('overall_rating') or '-'}",
+                    f"Pass: {row['pass_yards']} yds, {row['pass_tds']} TD, {row['interceptions']} INT",
+                    f"Rush: {row['rush_yards']} yds, {row['rush_tds']} TD",
+                    f"Rec: {row['rec_yards']} yds, {row['rec_tds']} TD, {row['receptions']} REC",
+                    f"Defense: {row['tackles']} TKL, {row['sacks']} SCK, {row['defensive_ints']} INT, {row['fumbles_forced']} FF",
+                ]
+                embed.add_field(name=name, value="\n".join(lines), inline=False)
+
+            await interaction.response.send_message(embed=embed)
+        except Exception:
+            LOGGER.exception(
+                "player_search error interaction=%s guild=%s league=%s query=%r",
+                interaction.id,
+                guild_id,
+                league_id,
+                name_query,
             )
-            return
-
-        if not players:
-            await interaction.response.send_message("No players found.", ephemeral=True)
-            return
-
-        embed = discord.Embed(title=f"Player Search: {name_query}", color=discord.Color.teal())
-        for row in players:
-            name = player_display_name(row)
-            team = row.get("team_name") or "FA"
-            lines = [
-                f"Team: {team}",
-                f"Position: {row.get('position') or '-'} | OVR: {row.get('overall_rating') or '-'}",
-                f"Pass: {row['pass_yards']} yds, {row['pass_tds']} TD, {row['interceptions']} INT",
-                f"Rush: {row['rush_yards']} yds, {row['rush_tds']} TD",
-                f"Rec: {row['rec_yards']} yds, {row['rec_tds']} TD, {row['receptions']} REC",
-                f"Defense: {row['tackles']} TKL, {row['sacks']} SCK, {row['defensive_ints']} INT, {row['fumbles_forced']} FF",
-            ]
-            embed.add_field(name=name, value="\n".join(lines), inline=False)
-
-        await interaction.response.send_message(embed=embed)
+            msg = "An error occurred while searching for players. Please try again later."
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
 
     async def build_trade_embed(self, trade_row: dict[str, Any]) -> discord.Embed:
         trade_id = safe_int(trade_row.get("id"))
