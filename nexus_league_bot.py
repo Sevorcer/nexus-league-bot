@@ -1100,30 +1100,40 @@ class Database:
             row = cur.fetchone()
             return row["week_number"] if row and row["week_number"] is not None else None
 
+    def table_exists(self, table_name: str) -> bool:
+        """Return True if *table_name* exists in the current DB search_path.
+
+        Uses ``to_regclass`` which is safe and requires no special privileges.
+        Results are cached per-instance (i.e. per process lifetime) to avoid
+        repeated round-trips for the same table name.
+        """
+        if not hasattr(self, "_table_exists_cache"):
+            self._table_exists_cache: dict[str, bool] = {}
+        if table_name in self._table_exists_cache:
+            return self._table_exists_cache[table_name]
+        try:
+            with self.conn() as conn, conn.cursor() as cur:
+                cur.execute("SELECT to_regclass(%s) IS NOT NULL AS exists", (table_name,))
+                row = cur.fetchone()
+                result = bool(row["exists"]) if row else False
+        except Exception as exc:
+            LOGGER.debug("table_exists(%s) check failed, assuming absent: %s", table_name, exc)
+            result = False
+        self._table_exists_cache[table_name] = result
+        return result
+
     def player_search(self, league_id: int, name_query: str) -> list[dict[str, Any]]:
-        with self.conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT p.id AS roster_id,
-                       p.first_name || ' ' || p.last_name AS full_name,
-                       p.position,
-                       p.overall_rating,
-                       COALESCE(t.team_name, 'FA') AS team_name,
-                       COALESCE(pps.pass_yards, 0) AS pass_yards,
-                       COALESCE(pps.pass_tds, 0) AS pass_tds,
-                       COALESCE(pps.interceptions, 0) AS interceptions,
-                       COALESCE(prs.rush_yards, 0) AS rush_yards,
-                       COALESCE(prs.rush_tds, 0) AS rush_tds,
-                       COALESCE(prc.rec_yards, 0) AS rec_yards,
-                       COALESCE(prc.rec_tds, 0) AS rec_tds,
-                       COALESCE(prc.receptions, 0) AS receptions,
-                       COALESCE(pds.tackles, 0) AS tackles,
-                       COALESCE(pds.sacks, 0) AS sacks,
-                       COALESCE(pds.defensive_ints, 0) AS defensive_ints,
-                       0 AS fumbles_forced -- not present in production defensive stat table
-                FROM player p
-                JOIN team t
-                  ON t.id = p.team_id
+        """Search for players by name, falling back to ``playerstats`` for any
+        specialised ``player_*_stats`` tables that do not yet exist."""
+        has_passing = self.table_exists("player_passing_stats")
+        has_rushing = self.table_exists("player_rushing_stats")
+        has_receiving = self.table_exists("player_receiving_stats")
+        has_defense = self.table_exists("player_defense_stats")
+
+        params: list[Any] = []
+
+        if has_passing:
+            passing_join = """
                 LEFT JOIN (
                     SELECT roster_id,
                            team_id,
@@ -1132,9 +1142,24 @@ class Database:
                            SUM(COALESCE(pass_ints, 0)) AS interceptions
                     FROM player_passing_stats
                     GROUP BY roster_id, team_id
-                ) pps
-                  ON pps.roster_id = p.id
-                 AND pps.team_id = p.team_id
+                ) pps ON pps.roster_id = p.id AND pps.team_id = p.team_id"""
+        else:
+            passing_join = """
+                LEFT JOIN (
+                    SELECT ps.player_id AS roster_id,
+                           p2.team_id,
+                           SUM(COALESCE(ps.pass_yards, 0)) AS pass_yards,
+                           SUM(COALESCE(ps.pass_tds, 0)) AS pass_tds,
+                           SUM(COALESCE(ps.interceptions, 0)) AS interceptions
+                    FROM playerstats ps
+                    JOIN player p2 ON p2.id = ps.player_id
+                    WHERE ps.league_id = %s
+                    GROUP BY ps.player_id, p2.team_id
+                ) pps ON pps.roster_id = p.id AND pps.team_id = p.team_id"""
+            params.append(league_id)
+
+        if has_rushing:
+            rushing_join = """
                 LEFT JOIN (
                     SELECT roster_id,
                            team_id,
@@ -1142,9 +1167,23 @@ class Database:
                            SUM(COALESCE(rush_tds, 0)) AS rush_tds
                     FROM player_rushing_stats
                     GROUP BY roster_id, team_id
-                ) prs
-                  ON prs.roster_id = p.id
-                 AND prs.team_id = p.team_id
+                ) prs ON prs.roster_id = p.id AND prs.team_id = p.team_id"""
+        else:
+            rushing_join = """
+                LEFT JOIN (
+                    SELECT ps.player_id AS roster_id,
+                           p2.team_id,
+                           SUM(COALESCE(ps.rush_yards, 0)) AS rush_yards,
+                           SUM(COALESCE(ps.rush_tds, 0)) AS rush_tds
+                    FROM playerstats ps
+                    JOIN player p2 ON p2.id = ps.player_id
+                    WHERE ps.league_id = %s
+                    GROUP BY ps.player_id, p2.team_id
+                ) prs ON prs.roster_id = p.id AND prs.team_id = p.team_id"""
+            params.append(league_id)
+
+        if has_receiving:
+            receiving_join = """
                 LEFT JOIN (
                     SELECT roster_id,
                            team_id,
@@ -1153,9 +1192,24 @@ class Database:
                            SUM(COALESCE(receptions, 0)) AS receptions
                     FROM player_receiving_stats
                     GROUP BY roster_id, team_id
-                ) prc
-                  ON prc.roster_id = p.id
-                 AND prc.team_id = p.team_id
+                ) prc ON prc.roster_id = p.id AND prc.team_id = p.team_id"""
+        else:
+            receiving_join = """
+                LEFT JOIN (
+                    SELECT ps.player_id AS roster_id,
+                           p2.team_id,
+                           SUM(COALESCE(ps.rec_yards, 0)) AS rec_yards,
+                           SUM(COALESCE(ps.rec_tds, 0)) AS rec_tds,
+                           SUM(COALESCE(ps.receptions, 0)) AS receptions
+                    FROM playerstats ps
+                    JOIN player p2 ON p2.id = ps.player_id
+                    WHERE ps.league_id = %s
+                    GROUP BY ps.player_id, p2.team_id
+                ) prc ON prc.roster_id = p.id AND prc.team_id = p.team_id"""
+            params.append(league_id)
+
+        if has_defense:
+            defense_join = """
                 LEFT JOIN (
                     SELECT roster_id,
                            team_id,
@@ -1164,16 +1218,56 @@ class Database:
                            SUM(COALESCE(def_ints, 0)) AS defensive_ints
                     FROM player_defense_stats
                     GROUP BY roster_id, team_id
-                ) pds
-                  ON pds.roster_id = p.id
-                 AND pds.team_id = p.team_id
-                WHERE t.league_id = %s
-                  AND (p.first_name || ' ' || p.last_name) ILIKE %s
-                ORDER BY p.first_name || ' ' || p.last_name ASC
-                LIMIT 5
-                """,
-                (league_id, f"%{name_query}%"),
-            )
+                ) pds ON pds.roster_id = p.id AND pds.team_id = p.team_id"""
+        else:
+            defense_join = """
+                LEFT JOIN (
+                    SELECT ps.player_id AS roster_id,
+                           p2.team_id,
+                           SUM(COALESCE(ps.tackles, 0)) AS tackles,
+                           SUM(COALESCE(ps.sacks, 0)) AS sacks,
+                           SUM(COALESCE(ps.defensive_ints, 0)) AS defensive_ints
+                    FROM playerstats ps
+                    JOIN player p2 ON p2.id = ps.player_id
+                    WHERE ps.league_id = %s
+                    GROUP BY ps.player_id, p2.team_id
+                ) pds ON pds.roster_id = p.id AND pds.team_id = p.team_id"""
+            params.append(league_id)
+
+        params.extend([league_id, f"%{name_query}%"])
+
+        sql = f"""
+            SELECT p.id AS roster_id,
+                   p.first_name || ' ' || p.last_name AS full_name,
+                   p.position,
+                   p.overall_rating,
+                   COALESCE(t.team_name, 'FA') AS team_name,
+                   COALESCE(pps.pass_yards, 0) AS pass_yards,
+                   COALESCE(pps.pass_tds, 0) AS pass_tds,
+                   COALESCE(pps.interceptions, 0) AS interceptions,
+                   COALESCE(prs.rush_yards, 0) AS rush_yards,
+                   COALESCE(prs.rush_tds, 0) AS rush_tds,
+                   COALESCE(prc.rec_yards, 0) AS rec_yards,
+                   COALESCE(prc.rec_tds, 0) AS rec_tds,
+                   COALESCE(prc.receptions, 0) AS receptions,
+                   COALESCE(pds.tackles, 0) AS tackles,
+                   COALESCE(pds.sacks, 0) AS sacks,
+                   COALESCE(pds.defensive_ints, 0) AS defensive_ints,
+                   0 AS fumbles_forced
+            FROM player p
+            JOIN team t ON t.id = p.team_id
+            {passing_join}
+            {rushing_join}
+            {receiving_join}
+            {defense_join}
+            WHERE t.league_id = %s
+              AND (p.first_name || ' ' || p.last_name) ILIKE %s
+            ORDER BY p.first_name || ' ' || p.last_name ASC
+            LIMIT 5
+        """
+
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
             return cur.fetchall()
 
     def ensure_xp_user(self, guild_id: int, user: discord.abc.User) -> None:
@@ -3493,7 +3587,16 @@ class NexusLeagueBot(discord.Client):
         if league_id is None:
             return
 
-        players = await asyncio.to_thread(self.db.player_search, league_id, name_query)
+        try:
+            players = await asyncio.to_thread(self.db.player_search, league_id, name_query)
+        except Exception as exc:
+            LOGGER.exception("player_search DB error for guild %s: %s", interaction.guild_id, exc)
+            await interaction.response.send_message(
+                "An error occurred while searching for players. Please try again later.",
+                ephemeral=True,
+            )
+            return
+
         if not players:
             await interaction.response.send_message("No players found.", ephemeral=True)
             return
