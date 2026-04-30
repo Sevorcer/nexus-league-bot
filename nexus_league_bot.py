@@ -1116,7 +1116,8 @@ class Database:
                 cur.execute("SELECT to_regclass(%s) IS NOT NULL AS exists", (table_name,))
                 row = cur.fetchone()
                 result = bool(row["exists"]) if row else False
-        except Exception:
+        except Exception as exc:
+            LOGGER.debug("table_exists(%s) check failed, assuming absent: %s", table_name, exc)
             result = False
         self._table_exists_cache[table_name] = result
         return result

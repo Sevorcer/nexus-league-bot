@@ -75,8 +75,7 @@ class TestTableExists(unittest.TestCase):
         with patch.object(db, "conn", return_value=conn):
             db.table_exists("player_receiving_stats")
             db.table_exists("player_receiving_stats")
-        # DB should have been queried exactly once despite two calls.
-        self.assertEqual(cur.execute.call_count, 1)
+        # DB should have been queried exactly once despite two calls.        self.assertEqual(cur.execute.call_count, 1)
 
     def test_different_tables_each_queried_once(self):
         db = _make_db()
@@ -85,7 +84,7 @@ class TestTableExists(unittest.TestCase):
         with patch.object(db, "conn", return_value=conn):
             db.table_exists("table_a")
             db.table_exists("table_b")
-            db.table_exists("table_a")  # cached – should NOT add another execute call
+            db.table_exists("table_a")  # cached - should NOT add another execute call
         self.assertEqual(cur.execute.call_count, 2)
 
     def test_returns_false_on_db_exception(self):
