@@ -807,6 +807,20 @@ class Database:
             )
             return cur.fetchone()
 
+    def fetch_all_teams(self, league_id: int) -> list[dict[str, Any]]:
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, team_name, city_name, division, overall_rating,
+                       wins, losses, ties, abbreviation
+                FROM team
+                WHERE league_id = %s
+                ORDER BY team_name ASC
+                """,
+                (league_id,),
+            )
+            return cur.fetchall()
+
     def fetch_team_roster(self, league_id: int, team_id: int) -> list[dict[str, Any]]:
         with self.conn() as conn, conn.cursor() as cur:
             cur.execute(
@@ -2412,6 +2426,46 @@ class NexusLeagueBot(discord.Client):
         async def post_standings(interaction: discord.Interaction) -> None:
             await self.send_standings(interaction, post_to_channel=True)
 
+        @self.tree.command(name="openteams", description="Browse teams with no assigned coach")
+        async def openteams(interaction: discord.Interaction) -> None:
+            league_id = await self.get_league_id(interaction)
+            if league_id is None:
+                return
+            if not interaction.guild:
+                await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+                return
+            await interaction.response.defer()
+            teams = await asyncio.to_thread(self.db.fetch_all_teams, league_id)
+            open_teams = [t for t in teams if self.find_member_for_team(interaction.guild, t["team_name"]) is None]
+            if not open_teams:
+                await interaction.followup.send("✅ All teams are currently claimed!")
+                return
+            total = len(open_teams)
+            embeds: list[discord.Embed] = []
+            for idx, team in enumerate(open_teams, start=1):
+                roster = await asyncio.to_thread(self.db.fetch_team_roster, league_id, int(team["id"]))
+                top_players = sorted(roster, key=lambda p: safe_int(p.get("overall_rating")) or 0, reverse=True)[:10]
+                player_lines = [
+                    f"{p.get('first_name', '')} {p.get('last_name', '')} | {p.get('position', '-')} | OVR {p.get('overall_rating', '-')} | {dev_trait_label(p.get('dev_trait'))}"
+                    for p in top_players
+                ]
+                embed = discord.Embed(
+                    title=f"🔓 {team.get('city_name') or ''} {team['team_name']}".strip(),
+                    color=team_color_from_name(team["team_name"]),
+                )
+                embed.add_field(name="Record", value=f"{team['wins']}-{team['losses']}-{team['ties']}", inline=True)
+                embed.add_field(name="Overall", value=str(team.get("overall_rating") or "N/A"), inline=True)
+                embed.add_field(name="Division", value=team.get("division") or "Unknown", inline=True)
+                embed.add_field(name="Top Players", value="\n".join(player_lines) if player_lines else "No players found", inline=False)
+                embed.set_footer(text=f"Team {idx} of {total} open teams")
+                embeds.append(embed)
+            if len(embeds) == 1:
+                await interaction.followup.send(embed=embeds[0])
+                return
+            view = RosterPaginationView(embeds, author_id=interaction.user.id)
+            msg = await interaction.followup.send(embed=embeds[0], view=view)
+            view.message = msg
+
         @self.tree.command(name="roster", description="Show roster for a team")
         @app_commands.autocomplete(team=team_name_autocomplete)
         async def roster(interaction: discord.Interaction, team: str) -> None:
@@ -2421,6 +2475,46 @@ class NexusLeagueBot(discord.Client):
         @app_commands.autocomplete(team=team_name_autocomplete)
         async def team_info(interaction: discord.Interaction, team: str) -> None:
             await self.send_team_info(interaction, team)
+
+        @team_group.command(name="list", description="List all teams and their assigned coaches")
+        async def team_list(interaction: discord.Interaction) -> None:
+            league_id = await self.get_league_id(interaction)
+            if league_id is None:
+                return
+            if not interaction.guild:
+                await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+                return
+            await interaction.response.defer()
+            teams = await asyncio.to_thread(self.db.fetch_all_teams, league_id)
+            league_name = await asyncio.to_thread(self.db.get_league_name, league_id)
+            open_count = 0
+            lines: list[str] = []
+            for team in teams:
+                member = self.find_member_for_team(interaction.guild, team["team_name"])
+                record = f"{team['wins']}-{team['losses']}-{team['ties']}"
+                if member:
+                    lines.append(f"{team['team_name']} ({record}) — {member.mention}")
+                else:
+                    lines.append(f"{team['team_name']} ({record}) — 🔓 Open")
+                    open_count += 1
+            page_size = 15
+            pages = [lines[i : i + page_size] for i in range(0, len(lines), page_size)]
+            total_pages = len(pages)
+            embeds_list: list[discord.Embed] = []
+            for idx, page_lines in enumerate(pages, start=1):
+                embed = discord.Embed(
+                    title=f"{league_name} — All Teams",
+                    description="\n".join(page_lines),
+                    color=discord.Color.blue(),
+                )
+                embed.set_footer(text=f"Page {idx} of {total_pages} | {len(teams)} teams | {open_count} open")
+                embeds_list.append(embed)
+            if len(embeds_list) == 1:
+                await interaction.followup.send(embed=embeds_list[0])
+                return
+            view = RosterPaginationView(embeds_list, author_id=interaction.user.id)
+            msg = await interaction.followup.send(embed=embeds_list[0], view=view)
+            view.message = msg
 
         @self.tree.command(name="schedule", description="Show current week or specific week schedule")
         @app_commands.describe(week="Optional week number")

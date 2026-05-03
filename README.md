@@ -43,8 +43,10 @@ python nexus_league_bot.py
 - `/post season_leaders`
 - `/standings`
 - `/post standings`
+- `/openteams`
 - `/roster team:<team_name>`
 - `/team info team:<team_name>`
+- `/team list`
 - `/schedule [week:<int>]`
 - `/scores`
 - `/headline`
