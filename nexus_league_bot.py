@@ -837,6 +837,7 @@ class Database:
                 LEFT JOIN player p ON p.id = ps.player_id
                 LEFT JOIN team t ON t.id = p.team_id
                 WHERE ps.league_id = %s
+                  AND (ps.season_type = 'reg' OR ps.season_type IS NULL)
                 GROUP BY ps.player_id
                 ORDER BY pass_yards DESC, player_name ASC
                 LIMIT 5
@@ -860,6 +861,7 @@ class Database:
                 LEFT JOIN player p ON p.id = ps.player_id
                 LEFT JOIN team t ON t.id = p.team_id
                 WHERE ps.league_id = %s
+                  AND (ps.season_type = 'reg' OR ps.season_type IS NULL)
                 GROUP BY ps.player_id
                 ORDER BY rush_yards DESC, player_name ASC
                 LIMIT 5
@@ -884,6 +886,7 @@ class Database:
                 LEFT JOIN player p ON p.id = ps.player_id
                 LEFT JOIN team t ON t.id = p.team_id
                 WHERE ps.league_id = %s
+                  AND (ps.season_type = 'reg' OR ps.season_type IS NULL)
                 GROUP BY ps.player_id
                 ORDER BY rec_yards DESC, player_name ASC
                 LIMIT 5
@@ -909,6 +912,7 @@ class Database:
                 LEFT JOIN player p ON p.id = ps.player_id
                 LEFT JOIN team t ON t.id = p.team_id
                 WHERE ps.league_id = %s
+                  AND (ps.season_type = 'reg' OR ps.season_type IS NULL)
                 GROUP BY ps.player_id
                 ORDER BY tackles DESC, player_name ASC
                 LIMIT 5
@@ -942,6 +946,7 @@ class Database:
                     LEFT JOIN player p ON p.id = ps.player_id
                     LEFT JOIN team t ON t.id = p.team_id
                     WHERE ps.league_id = %s
+                      AND (ps.season_type = 'reg' OR ps.season_type IS NULL)
                     GROUP BY ps.player_id
                 ) combined
                 GROUP BY roster_id
@@ -964,6 +969,7 @@ class Database:
                 FROM playerstats ps
                 JOIN player p ON p.id = ps.player_id
                 WHERE p.team_id = %s AND ps.league_id = %s
+                  AND (ps.season_type = 'reg' OR ps.season_type IS NULL)
                 GROUP BY ps.player_id
                 ORDER BY pass_yards DESC
                 LIMIT 1
@@ -980,6 +986,7 @@ class Database:
                 FROM playerstats ps
                 JOIN player p ON p.id = ps.player_id
                 WHERE p.team_id = %s AND ps.league_id = %s
+                  AND (ps.season_type = 'reg' OR ps.season_type IS NULL)
                 GROUP BY ps.player_id
                 ORDER BY rush_yards DESC
                 LIMIT 1
@@ -999,6 +1006,7 @@ class Database:
                 FROM playerstats ps
                 JOIN player p ON p.id = ps.player_id
                 WHERE p.team_id = %s AND ps.league_id = %s
+                  AND (ps.season_type = 'reg' OR ps.season_type IS NULL)
                 GROUP BY ps.player_id
                 ORDER BY defensive_score DESC
                 LIMIT 1
@@ -1141,6 +1149,7 @@ class Database:
                            SUM(COALESCE(pass_tds, 0)) AS pass_tds,
                            SUM(COALESCE(pass_ints, 0)) AS interceptions
                     FROM player_passing_stats
+                    WHERE (season_type = 'reg' OR season_type IS NULL)
                     GROUP BY roster_id, team_id
                 ) pps ON pps.roster_id = p.id AND pps.team_id = p.team_id"""
         else:
@@ -1154,6 +1163,7 @@ class Database:
                     FROM playerstats ps
                     JOIN player p2 ON p2.id = ps.player_id
                     WHERE ps.league_id = %s
+                      AND (ps.season_type = 'reg' OR ps.season_type IS NULL)
                     GROUP BY ps.player_id, p2.team_id
                 ) pps ON pps.roster_id = p.id AND pps.team_id = p.team_id"""
             params.append(league_id)
@@ -1166,6 +1176,7 @@ class Database:
                            SUM(COALESCE(rush_yds, 0)) AS rush_yards,
                            SUM(COALESCE(rush_tds, 0)) AS rush_tds
                     FROM player_rushing_stats
+                    WHERE (season_type = 'reg' OR season_type IS NULL)
                     GROUP BY roster_id, team_id
                 ) prs ON prs.roster_id = p.id AND prs.team_id = p.team_id"""
         else:
@@ -1178,6 +1189,7 @@ class Database:
                     FROM playerstats ps
                     JOIN player p2 ON p2.id = ps.player_id
                     WHERE ps.league_id = %s
+                      AND (ps.season_type = 'reg' OR ps.season_type IS NULL)
                     GROUP BY ps.player_id, p2.team_id
                 ) prs ON prs.roster_id = p.id AND prs.team_id = p.team_id"""
             params.append(league_id)
@@ -1191,6 +1203,7 @@ class Database:
                            SUM(COALESCE(rec_tds, 0)) AS rec_tds,
                            SUM(COALESCE(receptions, 0)) AS receptions
                     FROM player_receiving_stats
+                    WHERE (season_type = 'reg' OR season_type IS NULL)
                     GROUP BY roster_id, team_id
                 ) prc ON prc.roster_id = p.id AND prc.team_id = p.team_id"""
         else:
@@ -1204,6 +1217,7 @@ class Database:
                     FROM playerstats ps
                     JOIN player p2 ON p2.id = ps.player_id
                     WHERE ps.league_id = %s
+                      AND (ps.season_type = 'reg' OR ps.season_type IS NULL)
                     GROUP BY ps.player_id, p2.team_id
                 ) prc ON prc.roster_id = p.id AND prc.team_id = p.team_id"""
             params.append(league_id)
@@ -1217,6 +1231,7 @@ class Database:
                            SUM(COALESCE(def_sacks, 0)) AS sacks,
                            SUM(COALESCE(def_ints, 0)) AS defensive_ints
                     FROM player_defense_stats
+                    WHERE (season_type = 'reg' OR season_type IS NULL)
                     GROUP BY roster_id, team_id
                 ) pds ON pds.roster_id = p.id AND pds.team_id = p.team_id"""
         else:
@@ -1230,6 +1245,7 @@ class Database:
                     FROM playerstats ps
                     JOIN player p2 ON p2.id = ps.player_id
                     WHERE ps.league_id = %s
+                      AND (ps.season_type = 'reg' OR ps.season_type IS NULL)
                     GROUP BY ps.player_id, p2.team_id
                 ) pds ON pds.roster_id = p.id AND pds.team_id = p.team_id"""
             params.append(league_id)
