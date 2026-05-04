@@ -797,8 +797,13 @@ class Database:
                        COALESCE(st.turnover_diff, 0)::int as turnover_diff,
                        COALESCE(st.seed, 0)::int as seed
                 FROM team t
-                LEFT JOIN standings st
-                  ON st.team_id = t.id
+                LEFT JOIN LATERAL (
+                  SELECT pts_for, pts_against, turnover_diff, seed
+                  FROM standings s
+                  WHERE s.team_id = t.id
+                  ORDER BY CASE WHEN s.season_type = 'reg' THEN 0 ELSE 1 END
+                  LIMIT 1
+                ) st ON true
                 WHERE t.league_id = %s
                   AND t.id = %s
                 LIMIT 1
@@ -1036,6 +1041,30 @@ class Database:
 
     def fetch_standings(self, league_id: int) -> list[dict[str, Any]]:
         with self.conn() as conn, conn.cursor() as cur:
+            # Prefer regular season rows; fall back to all rows if none exist
+            cur.execute(
+                """
+                SELECT t.team_name,
+                       COALESCE(t.division, 'Unknown') AS division_name,
+                       s.wins,
+                       s.losses,
+                       s.ties,
+                       s.seed,
+                       s.pts_for,
+                       s.pts_against,
+                       s.win_pct
+                FROM standings s
+                JOIN team t
+                  ON t.id = s.team_id
+                WHERE t.league_id = %s
+                  AND s.season_type = 'reg'
+                ORDER BY s.wins DESC, s.losses ASC
+                """,
+                (league_id,),
+            )
+            rows = cur.fetchall()
+            if rows:
+                return rows
             cur.execute(
                 """
                 SELECT t.team_name,
