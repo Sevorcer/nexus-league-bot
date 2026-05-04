@@ -792,16 +792,16 @@ class Database:
                        t.ties,
                        t.overall_rating as team_ovr,
                        COALESCE(t.wins::float / NULLIF((t.wins + t.losses + t.ties), 0), 0) as win_pct,
-                       COALESCE(st.pts_for, 0)::int as pts_for,
-                       COALESCE(st.pts_against, 0)::int as pts_against,
-                       COALESCE(st.turnover_diff, 0)::int as turnover_diff,
+                       0::int as pts_for,       -- not in standing table; kept for API compat
+                       0::int as pts_against,   -- not in standing table; kept for API compat
+                       0::int as turnover_diff,  -- not in standing table; kept for API compat
                        COALESCE(st.seed, 0)::int as seed
                 FROM team t
                 LEFT JOIN LATERAL (
-                  SELECT pts_for, pts_against, turnover_diff, seed
-                  FROM standings s
-                  WHERE s.team_id = t.id
-                  LIMIT 1
+                  SELECT seed
+                  FROM standing s
+                  WHERE s.team_id = t.id AND s.league_id = t.league_id
+                  ORDER BY s.id DESC LIMIT 1
                 ) st ON true
                 WHERE t.league_id = %s
                   AND t.id = %s
@@ -1043,18 +1043,16 @@ class Database:
             cur.execute(
                 """
                 SELECT t.team_name,
-                       COALESCE(t.division, 'Unknown') AS division_name,
+                       COALESCE(s.division_name, t.division, 'Unknown') AS division_name,
                        s.wins,
                        s.losses,
                        s.ties,
                        s.seed,
-                       s.pts_for,
-                       s.pts_against,
-                       s.win_pct
-                FROM standings s
-                JOIN team t
-                  ON t.id = s.team_id
-                WHERE t.league_id = %s
+                       COALESCE(s.wins::float / NULLIF((s.wins + s.losses + s.ties), 0), 0) AS win_pct
+                FROM standing s
+                JOIN team t ON t.id = s.team_id AND t.league_id = s.league_id
+                WHERE s.league_id = %s
+                  AND (s.season_type = 'reg' OR s.season_type IS NULL)
                 ORDER BY s.wins DESC, s.losses ASC
                 """,
                 (league_id,),
