@@ -1057,7 +1057,7 @@ class Database:
                       AND (s.season_type = 'reg' OR s.season_type IS NULL)
                     ORDER BY s.team_id, s.id DESC
                 ) latest
-                ORDER BY wins DESC, losses ASC
+                ORDER BY latest.wins DESC, latest.losses ASC
                 """,
                 (league_id,),
             )
