@@ -1042,18 +1042,22 @@ class Database:
         with self.conn() as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT t.team_name,
-                       COALESCE(s.division_name, t.division, 'Unknown') AS division_name,
-                       s.wins,
-                       s.losses,
-                       s.ties,
-                       s.seed,
-                       COALESCE(s.wins::float / NULLIF((s.wins + s.losses + s.ties), 0), 0) AS win_pct
-                FROM standing s
-                JOIN team t ON t.id = s.team_id AND t.league_id = s.league_id
-                WHERE s.league_id = %s
-                  AND (s.season_type = 'reg' OR s.season_type IS NULL)
-                ORDER BY s.wins DESC, s.losses ASC
+                SELECT * FROM (
+                    SELECT DISTINCT ON (s.team_id)
+                           t.team_name,
+                           COALESCE(s.division_name, t.division, 'Unknown') AS division_name,
+                           s.wins,
+                           s.losses,
+                           s.ties,
+                           s.seed,
+                           COALESCE(s.wins::float / NULLIF((s.wins + s.losses + s.ties), 0), 0) AS win_pct
+                    FROM standing s
+                    JOIN team t ON t.id = s.team_id AND t.league_id = s.league_id
+                    WHERE s.league_id = %s
+                      AND (s.season_type = 'reg' OR s.season_type IS NULL)
+                    ORDER BY s.team_id, s.id DESC
+                ) latest
+                ORDER BY latest.wins DESC, latest.losses ASC
                 """,
                 (league_id,),
             )
