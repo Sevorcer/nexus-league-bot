@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import hashlib
 import json
 import logging
@@ -13,6 +14,7 @@ from urllib import request as urllib_request
 
 import discord
 from discord import app_commands
+from discord.ext import tasks
 import psycopg
 from psycopg.rows import dict_row
 
@@ -546,6 +548,33 @@ class Database:
                 "ON bot_content_memory (guild_id, league_id, content_type, used_at DESC)"
             )
 
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS league_settings(
+                    league_id INTEGER PRIMARY KEY,
+                    reminder_interval_hours INTEGER NOT NULL DEFAULT 8
+                )
+                """
+            )
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS game_channel_state(
+                    channel_id BIGINT PRIMARY KEY,
+                    guild_id BIGINT NOT NULL,
+                    league_id INTEGER NOT NULL,
+                    home_team_name TEXT,
+                    away_team_name TEXT,
+                    home_user_id BIGINT,
+                    away_user_id BIGINT,
+                    scheduled BOOLEAN NOT NULL DEFAULT FALSE,
+                    completed BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    last_reminder_at TIMESTAMPTZ
+                )
+                """
+            )
+
             conn.commit()
 
     def fetch_recent_content_keys(
@@ -638,6 +667,123 @@ class Database:
                 self.cleanup_content_memory(guild_id, league_id)
             except Exception as exc:
                 LOGGER.debug("content_memory cleanup error (non-fatal): %s", exc)
+
+    # ------------------------------------------------------------------ #
+    # Reminder / game-channel state methods                               #
+    # ------------------------------------------------------------------ #
+
+    def get_reminder_interval(self, league_id: int) -> int:
+        """Return the configured reminder interval in hours for the league (default 8)."""
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT reminder_interval_hours FROM league_settings WHERE league_id = %s",
+                (league_id,),
+            )
+            row = cur.fetchone()
+            return int(row["reminder_interval_hours"]) if row else 8
+
+    def set_reminder_interval(self, league_id: int, hours: int) -> None:
+        """Upsert the reminder interval for a league."""
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO league_settings (league_id, reminder_interval_hours)
+                VALUES (%s, %s)
+                ON CONFLICT (league_id) DO UPDATE
+                SET reminder_interval_hours = EXCLUDED.reminder_interval_hours
+                """,
+                (league_id, hours),
+            )
+            conn.commit()
+
+    def upsert_game_channel_state(
+        self,
+        channel_id: int,
+        guild_id: int,
+        league_id: int,
+        home_team_name: str,
+        away_team_name: str,
+        home_user_id: int | None,
+        away_user_id: int | None,
+    ) -> None:
+        """Insert or update the game channel state row."""
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO game_channel_state
+                    (channel_id, guild_id, league_id, home_team_name, away_team_name,
+                     home_user_id, away_user_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (channel_id) DO UPDATE SET
+                    guild_id = EXCLUDED.guild_id,
+                    league_id = EXCLUDED.league_id,
+                    home_team_name = EXCLUDED.home_team_name,
+                    away_team_name = EXCLUDED.away_team_name,
+                    home_user_id = EXCLUDED.home_user_id,
+                    away_user_id = EXCLUDED.away_user_id
+                """,
+                (
+                    channel_id,
+                    guild_id,
+                    league_id,
+                    home_team_name,
+                    away_team_name,
+                    home_user_id or None,
+                    away_user_id or None,
+                ),
+            )
+            conn.commit()
+
+    def get_game_channel_state(self, channel_id: int) -> dict[str, Any] | None:
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM game_channel_state WHERE channel_id = %s",
+                (channel_id,),
+            )
+            return cur.fetchone()
+
+    def get_pending_game_channels(self) -> list[dict[str, Any]]:
+        """Return game channel rows that are not scheduled and not completed."""
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM game_channel_state
+                WHERE scheduled = FALSE AND completed = FALSE
+                """
+            )
+            return cur.fetchall()
+
+    def mark_game_scheduled(self, channel_id: int) -> None:
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE game_channel_state SET scheduled = TRUE WHERE channel_id = %s",
+                (channel_id,),
+            )
+            conn.commit()
+
+    def mark_game_completed(self, channel_id: int) -> None:
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE game_channel_state SET completed = TRUE WHERE channel_id = %s",
+                (channel_id,),
+            )
+            conn.commit()
+
+    def update_last_reminder_at(self, channel_id: int) -> None:
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE game_channel_state SET last_reminder_at = NOW() WHERE channel_id = %s",
+                (channel_id,),
+            )
+            conn.commit()
+
+    def delete_game_channel_state(self, channel_id: int) -> None:
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM game_channel_state WHERE channel_id = %s",
+                (channel_id,),
+            )
+            conn.commit()
 
     def get_guild_config(self, guild_id: int) -> dict[str, Any] | None:
         with self.conn() as conn, conn.cursor() as cur:
@@ -2211,6 +2357,131 @@ class RosterPaginationView(discord.ui.View):
         await self._edit_page(interaction)
 
 
+class GameSchedulingView(discord.ui.View):
+    """Persistent view posted in each game channel when it is created.
+
+    Buttons:
+    - ⏰ Scheduled: stops reminders, marks game as scheduled.
+    - ✅ Completed: marks game completed and shows the Delete button view.
+    - 🗑️ Delete Channel: only works after the game is completed.
+    """
+
+    def __init__(self, bot: "NexusLeagueBot") -> None:
+        super().__init__(timeout=None)
+        self.bot = bot
+
+    @discord.ui.button(
+        label="Scheduled",
+        style=discord.ButtonStyle.primary,
+        emoji="⏰",
+        custom_id="game_sched_scheduled",
+    )
+    async def scheduled(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.guild or interaction.channel is None:
+            await interaction.response.send_message("Cannot process this request.", ephemeral=True)
+            return
+        state = await asyncio.to_thread(self.bot.db.get_game_channel_state, int(interaction.channel.id))
+        if not state:
+            await interaction.response.send_message("No game state found for this channel.", ephemeral=True)
+            return
+        if state.get("scheduled") or state.get("completed"):
+            await interaction.response.send_message("This game is already marked scheduled or completed.", ephemeral=True)
+            return
+        await asyncio.to_thread(self.bot.db.mark_game_scheduled, int(interaction.channel.id))
+        await interaction.response.edit_message(
+            content=(
+                "**Game Scheduling Status**\n"
+                "⏰ This game has been marked as **Scheduled**. Reminders have stopped.\n\n"
+                f"Marked by {interaction.user.mention}."
+            ),
+            view=None,
+        )
+
+    @discord.ui.button(
+        label="Completed",
+        style=discord.ButtonStyle.success,
+        emoji="✅",
+        custom_id="game_sched_completed",
+    )
+    async def completed(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.guild or interaction.channel is None:
+            await interaction.response.send_message("Cannot process this request.", ephemeral=True)
+            return
+        state = await asyncio.to_thread(self.bot.db.get_game_channel_state, int(interaction.channel.id))
+        if not state:
+            await interaction.response.send_message("No game state found for this channel.", ephemeral=True)
+            return
+        if state.get("completed"):
+            await interaction.response.send_message("This game is already marked completed.", ephemeral=True)
+            return
+        await asyncio.to_thread(self.bot.db.mark_game_completed, int(interaction.channel.id))
+        await interaction.response.edit_message(
+            content=(
+                "**Game Scheduling Status**\n"
+                "✅ This game has been marked as **Completed**. Reminders have stopped.\n\n"
+                f"Marked by {interaction.user.mention}.\n\n"
+                "Use the button below to delete this channel when you're done."
+            ),
+            view=GameChannelDeleteView(self.bot),
+        )
+
+    @discord.ui.button(
+        label="Delete Channel",
+        style=discord.ButtonStyle.danger,
+        emoji="🗑️",
+        custom_id="game_sched_delete",
+    )
+    async def delete_channel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.guild or interaction.channel is None:
+            await interaction.response.send_message("Cannot process this request.", ephemeral=True)
+            return
+        state = await asyncio.to_thread(self.bot.db.get_game_channel_state, int(interaction.channel.id))
+        if not state:
+            await interaction.response.send_message("No game state found for this channel.", ephemeral=True)
+            return
+        if not state.get("completed"):
+            await interaction.response.send_message(
+                "Please mark the game as **Completed** before deleting the channel.",
+                ephemeral=True,
+            )
+            return
+        channel = interaction.channel
+        await interaction.response.send_message("🗑️ Deleting channel...", ephemeral=True)
+        await asyncio.to_thread(self.bot.db.delete_game_channel_state, int(channel.id))
+        try:
+            await channel.delete(reason=f"Game completed — deleted via bot by {interaction.user}")
+        except discord.HTTPException as exc:
+            LOGGER.warning("GameSchedulingView: failed to delete channel %s: %s", channel.id, exc)
+            await interaction.followup.send("Failed to delete the channel. Please delete it manually.", ephemeral=True)
+
+
+class GameChannelDeleteView(discord.ui.View):
+    """Persistent view shown after a game is marked Completed, providing a Delete Channel button."""
+
+    def __init__(self, bot: "NexusLeagueBot") -> None:
+        super().__init__(timeout=None)
+        self.bot = bot
+
+    @discord.ui.button(
+        label="Delete Channel",
+        style=discord.ButtonStyle.danger,
+        emoji="🗑️",
+        custom_id="game_completed_delete",
+    )
+    async def delete_channel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.guild or interaction.channel is None:
+            await interaction.response.send_message("Cannot process this request.", ephemeral=True)
+            return
+        channel = interaction.channel
+        await interaction.response.send_message("🗑️ Deleting channel...", ephemeral=True)
+        await asyncio.to_thread(self.bot.db.delete_game_channel_state, int(channel.id))
+        try:
+            await channel.delete(reason=f"Game completed — deleted via bot by {interaction.user}")
+        except discord.HTTPException as exc:
+            LOGGER.warning("GameChannelDeleteView: failed to delete channel %s: %s", channel.id, exc)
+            await interaction.followup.send("Failed to delete the channel. Please delete it manually.", ephemeral=True)
+
+
 class NexusLeagueBot(discord.Client):
     def __init__(self, db: Database, guild_ids: list[int]) -> None:
         intents = discord.Intents.default()
@@ -2355,6 +2626,24 @@ class NexusLeagueBot(discord.Client):
                 blacklist_channels.strip(),
             )
             await interaction.response.send_message("XP settings updated.", ephemeral=True)
+
+        @setup_group.command(name="reminder_interval", description="Set reminder interval (hours) for unscheduled game channels")
+        @app_commands.describe(hours="How many hours between reminders (e.g. 4, 8). Default is 8.")
+        async def setup_reminder_interval(interaction: discord.Interaction, hours: int) -> None:
+            if not interaction.guild or not await self.user_is_admin(interaction):
+                await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+                return
+            league_id = await self.get_league_id(interaction)
+            if league_id is None:
+                return
+            if hours < 1:
+                await interaction.response.send_message("Interval must be at least 1 hour.", ephemeral=True)
+                return
+            await asyncio.to_thread(self.db.set_reminder_interval, league_id, hours)
+            await interaction.response.send_message(
+                f"Reminder interval set to **{hours} hour(s)** for this league.",
+                ephemeral=True,
+            )
 
         @self.tree.command(name="ping", description="Check if the bot is online")
         async def ping(interaction: discord.Interaction) -> None:
@@ -2958,6 +3247,33 @@ class NexusLeagueBot(discord.Client):
                 )
                 await channel.send("\n".join(message_lines))
 
+                # Post the game scheduling control message with buttons
+                home_user_id = int(home_member.id) if home_member else None
+                away_user_id = int(away_member.id) if away_member else None
+                if home_user_id is None or away_user_id is None:
+                    LOGGER.warning(
+                        "create_weekly_channels: could not resolve Discord user(s) for channel %s "
+                        "(home=%s away=%s) — reminders will be skipped",
+                        channel.id,
+                        home_team_name,
+                        away_team_name,
+                    )
+                await asyncio.to_thread(
+                    self.db.upsert_game_channel_state,
+                    int(channel.id),
+                    int(guild.id),
+                    league_id,
+                    home_team_name,
+                    away_team_name,
+                    home_user_id,
+                    away_user_id,
+                )
+                await channel.send(
+                    "**Game Scheduling Status:**\nUse the buttons below to update this game's status. "
+                    "The two team owners will be reminded every few hours until the game is marked scheduled or completed.",
+                    view=GameSchedulingView(self),
+                )
+
                 if safe_text(game.get("away_division")) and safe_text(game.get("away_division")) == safe_text(game.get("home_division")):
                     await channel.send("🔥 **This matchup has been tagged as a Rivalry Game.**")
 
@@ -3102,6 +3418,9 @@ class NexusLeagueBot(discord.Client):
         self.tree.add_command(team_group)
         self.tree.add_command(player_group)
         self.add_view(TradeReviewView(self))
+        self.add_view(GameSchedulingView(self))
+        self.add_view(GameChannelDeleteView(self))
+        self.reminder_loop.start()
 
         if self.guild_ids:
             for guild_id in self.guild_ids:
@@ -3856,6 +4175,123 @@ class NexusLeagueBot(discord.Client):
         if safe_text(trade_row.get("status"), "pending").lower() in {"approved", "denied"}:
             await self.post_trade_announcement(trade_row)
         return trade_row
+
+    # ------------------------------------------------------------------ #
+    # Reminder background task                                            #
+    # ------------------------------------------------------------------ #
+
+    @tasks.loop(minutes=30)
+    async def reminder_loop(self) -> None:
+        """Background task: send scheduling reminders for unscheduled game channels."""
+        try:
+            await self._send_pending_reminders()
+        except Exception as exc:
+            LOGGER.exception("reminder_loop: unhandled error: %s", exc)
+
+    @reminder_loop.before_loop
+    async def before_reminder_loop(self) -> None:
+        await self.wait_until_ready()
+
+    async def _send_pending_reminders(self) -> None:
+        """Check all pending game channels and send reminders where the interval has elapsed."""
+        try:
+            pending = await asyncio.to_thread(self.db.get_pending_game_channels)
+        except Exception as exc:
+            LOGGER.exception("_send_pending_reminders: failed to fetch pending channels: %s", exc)
+            return
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+
+        for row in pending:
+            channel_id = safe_int(row["channel_id"])
+            league_id = safe_int(row["league_id"])
+
+            try:
+                interval_hours = await asyncio.to_thread(self.db.get_reminder_interval, league_id)
+            except Exception as exc:
+                LOGGER.warning(
+                    "_send_pending_reminders: failed to get interval for league %s: %s",
+                    league_id,
+                    exc,
+                )
+                interval_hours = 8
+
+            last_reminder_at: datetime.datetime | None = row.get("last_reminder_at")
+            if last_reminder_at is not None:
+                if last_reminder_at.tzinfo is None:
+                    last_reminder_at = last_reminder_at.replace(tzinfo=datetime.timezone.utc)
+                elapsed_hours = (now - last_reminder_at).total_seconds() / 3600.0
+                if elapsed_hours < interval_hours:
+                    continue
+            # first reminder: also honour the interval since channel creation
+            else:
+                created_at: datetime.datetime | None = row.get("created_at")
+                if created_at is not None:
+                    if created_at.tzinfo is None:
+                        created_at = created_at.replace(tzinfo=datetime.timezone.utc)
+                    elapsed_hours = (now - created_at).total_seconds() / 3600.0
+                    if elapsed_hours < interval_hours:
+                        continue
+
+            # Resolve the Discord channel
+            channel = self.get_channel(channel_id)
+            if channel is None:
+                try:
+                    channel = await self.fetch_channel(channel_id)
+                except discord.NotFound:
+                    LOGGER.info(
+                        "_send_pending_reminders: channel %s not found, cleaning up state (league_id=%s)",
+                        channel_id,
+                        league_id,
+                    )
+                    try:
+                        await asyncio.to_thread(self.db.delete_game_channel_state, channel_id)
+                    except Exception:
+                        pass
+                    continue
+                except Exception as exc:
+                    LOGGER.warning(
+                        "_send_pending_reminders: error fetching channel %s (league_id=%s): %s",
+                        channel_id,
+                        league_id,
+                        exc,
+                    )
+                    continue
+
+            if not isinstance(channel, discord.TextChannel):
+                continue
+
+            home_user_id = safe_int(row.get("home_user_id"))
+            away_user_id = safe_int(row.get("away_user_id"))
+
+            mentions: list[str] = []
+            if home_user_id:
+                mentions.append(f"<@{home_user_id}>")
+            if away_user_id:
+                mentions.append(f"<@{away_user_id}>")
+
+            if not mentions:
+                LOGGER.warning(
+                    "_send_pending_reminders: no user IDs for channel %s (league_id=%s) — skipping reminder",
+                    channel_id,
+                    league_id,
+                )
+                continue
+
+            mention_str = " ".join(mentions)
+            try:
+                await channel.send(
+                    f"⏰ **Game Reminder** — {mention_str} your game hasn't been scheduled yet! "
+                    "Please use the **⏰ Scheduled** or **✅ Completed** buttons above to update the status."
+                )
+                await asyncio.to_thread(self.db.update_last_reminder_at, channel_id)
+            except discord.HTTPException as exc:
+                LOGGER.warning(
+                    "_send_pending_reminders: failed to send reminder to channel %s (league_id=%s): %s",
+                    channel_id,
+                    league_id,
+                    exc,
+                )
 
 
 async def team_name_autocomplete(
