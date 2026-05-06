@@ -4420,11 +4420,12 @@ class NexusLeagueBot(discord.Client):
                 continue
 
             try:
-                await asyncio.to_thread(self.db.delete_game_channel_state, channel_id)
                 await channel.delete(reason="Game completed — auto-deleted by bot after 1 hour")
+                await asyncio.to_thread(self.db.delete_game_channel_state, channel_id)
                 LOGGER.info("_delete_completed_channels: deleted channel %s", channel_id)
             except discord.NotFound:
                 LOGGER.info("_delete_completed_channels: channel %s already gone", channel_id)
+                await asyncio.to_thread(self.db.delete_game_channel_state, channel_id)
             except discord.HTTPException as exc:
                 LOGGER.warning(
                     "_delete_completed_channels: failed to delete channel %s: %s",
