@@ -574,6 +574,9 @@ class Database:
                 )
                 """
             )
+            cur.execute(
+                "ALTER TABLE game_channel_state ADD COLUMN IF NOT EXISTS delete_at TIMESTAMPTZ"
+            )
 
             conn.commit()
 
@@ -764,10 +767,21 @@ class Database:
     def mark_game_completed(self, channel_id: int) -> None:
         with self.conn() as conn, conn.cursor() as cur:
             cur.execute(
-                "UPDATE game_channel_state SET completed = TRUE WHERE channel_id = %s",
+                "UPDATE game_channel_state SET completed = TRUE, delete_at = NOW() + INTERVAL '1 hour' WHERE channel_id = %s",
                 (channel_id,),
             )
             conn.commit()
+
+    def get_channels_due_for_deletion(self) -> list[dict[str, Any]]:
+        """Return game channel rows that are completed and whose delete_at has passed."""
+        with self.conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM game_channel_state
+                WHERE completed = TRUE AND delete_at IS NOT NULL AND delete_at <= NOW()
+                """
+            )
+            return cur.fetchall()
 
     def update_last_reminder_at(self, channel_id: int) -> None:
         with self.conn() as conn, conn.cursor() as cur:
@@ -2362,13 +2376,44 @@ class GameSchedulingView(discord.ui.View):
 
     Buttons:
     - ⏰ Scheduled: stops reminders, marks game as scheduled.
-    - ✅ Completed: marks game completed and shows the Delete button view.
-    - 🗑️ Delete Channel: only works after the game is completed.
+    - ✅ Completed: marks game completed, enables Delete and triggers auto-delete in 1 hour.
+    - 🗑️ Delete Channel: admin-only, enabled after game is completed.
     """
 
     def __init__(self, bot: "NexusLeagueBot") -> None:
         super().__init__(timeout=None)
         self.bot = bot
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _make_updated_view(self, *, scheduled: bool, completed: bool) -> "GameSchedulingView":
+        """Return a new GameSchedulingView with buttons set to appropriate disabled states."""
+        view = GameSchedulingView(self.bot)
+        for child in view.children:
+            if not isinstance(child, discord.ui.Button):
+                continue
+            if child.custom_id == "game_sched_scheduled":
+                child.disabled = scheduled or completed
+            elif child.custom_id == "game_sched_completed":
+                child.disabled = completed
+            elif child.custom_id == "game_sched_delete":
+                child.disabled = not completed
+        return view
+
+    async def _check_owner_or_admin(self, interaction: discord.Interaction, state: dict) -> bool:
+        """Return True if the interacting user is a matched owner or guild admin."""
+        home_uid = state.get("home_user_id")
+        away_uid = state.get("away_user_id")
+        user_id = interaction.user.id
+        if user_id == home_uid or user_id == away_uid:
+            return True
+        return await self.bot.user_is_admin(interaction)
+
+    # ------------------------------------------------------------------
+    # Buttons
+    # ------------------------------------------------------------------
 
     @discord.ui.button(
         label="Scheduled",
@@ -2387,6 +2432,12 @@ class GameSchedulingView(discord.ui.View):
         if state.get("scheduled") or state.get("completed"):
             await interaction.response.send_message("This game is already marked scheduled or completed.", ephemeral=True)
             return
+        if not await self._check_owner_or_admin(interaction, state):
+            await interaction.response.send_message(
+                "Only the two matched users or an admin can mark this game as scheduled.",
+                ephemeral=True,
+            )
+            return
         await asyncio.to_thread(self.bot.db.mark_game_scheduled, int(interaction.channel.id))
         await interaction.response.edit_message(
             content=(
@@ -2394,7 +2445,7 @@ class GameSchedulingView(discord.ui.View):
                 "⏰ This game has been marked as **Scheduled**. Reminders have stopped.\n\n"
                 f"Marked by {interaction.user.mention}."
             ),
-            view=None,
+            view=self._make_updated_view(scheduled=True, completed=False),
         )
 
     @discord.ui.button(
@@ -2414,15 +2465,22 @@ class GameSchedulingView(discord.ui.View):
         if state.get("completed"):
             await interaction.response.send_message("This game is already marked completed.", ephemeral=True)
             return
+        if not await self._check_owner_or_admin(interaction, state):
+            await interaction.response.send_message(
+                "Only the two matched users or an admin can mark this game as completed.",
+                ephemeral=True,
+            )
+            return
         await asyncio.to_thread(self.bot.db.mark_game_completed, int(interaction.channel.id))
         await interaction.response.edit_message(
             content=(
                 "**Game Scheduling Status**\n"
                 "✅ This game has been marked as **Completed**. Reminders have stopped.\n\n"
                 f"Marked by {interaction.user.mention}.\n\n"
-                "Use the button below to delete this channel when you're done."
+                "⏳ This channel will be automatically deleted in **1 hour**.\n"
+                "An admin may also delete it immediately using the button below."
             ),
-            view=GameChannelDeleteView(self.bot),
+            view=self._make_updated_view(scheduled=True, completed=True),
         )
 
     @discord.ui.button(
@@ -2434,6 +2492,12 @@ class GameSchedulingView(discord.ui.View):
     async def delete_channel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not interaction.guild or interaction.channel is None:
             await interaction.response.send_message("Cannot process this request.", ephemeral=True)
+            return
+        if not await self.bot.user_is_admin(interaction):
+            await interaction.response.send_message(
+                "Only admins can delete this channel.",
+                ephemeral=True,
+            )
             return
         state = await asyncio.to_thread(self.bot.db.get_game_channel_state, int(interaction.channel.id))
         if not state:
@@ -2471,6 +2535,12 @@ class GameChannelDeleteView(discord.ui.View):
     async def delete_channel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not interaction.guild or interaction.channel is None:
             await interaction.response.send_message("Cannot process this request.", ephemeral=True)
+            return
+        if not await self.bot.user_is_admin(interaction):
+            await interaction.response.send_message(
+                "Only admins can delete this channel.",
+                ephemeral=True,
+            )
             return
         channel = interaction.channel
         await interaction.response.send_message("🗑️ Deleting channel...", ephemeral=True)
@@ -3421,6 +3491,7 @@ class NexusLeagueBot(discord.Client):
         self.add_view(GameSchedulingView(self))
         self.add_view(GameChannelDeleteView(self))
         self.reminder_loop.start()
+        self.cleanup_loop.start()
 
         if self.guild_ids:
             for guild_id in self.guild_ids:
@@ -4290,6 +4361,74 @@ class NexusLeagueBot(discord.Client):
                     "_send_pending_reminders: failed to send reminder to channel %s (league_id=%s): %s",
                     channel_id,
                     league_id,
+                    exc,
+                )
+
+    # ------------------------------------------------------------------ #
+    # Auto-delete background task                                         #
+    # ------------------------------------------------------------------ #
+
+    @tasks.loop(minutes=5)
+    async def cleanup_loop(self) -> None:
+        """Background task: delete completed game channels whose delete_at has passed."""
+        try:
+            await self._delete_completed_channels()
+        except Exception as exc:
+            LOGGER.exception("cleanup_loop: unhandled error: %s", exc)
+
+    @cleanup_loop.before_loop
+    async def before_cleanup_loop(self) -> None:
+        await self.wait_until_ready()
+
+    async def _delete_completed_channels(self) -> None:
+        """Find completed game channels past their delete_at time and delete them."""
+        try:
+            due = await asyncio.to_thread(self.db.get_channels_due_for_deletion)
+        except Exception as exc:
+            LOGGER.exception("_delete_completed_channels: failed to fetch due channels: %s", exc)
+            return
+
+        for row in due:
+            channel_id = safe_int(row["channel_id"])
+            channel = self.get_channel(channel_id)
+            if channel is None:
+                try:
+                    channel = await self.fetch_channel(channel_id)
+                except discord.NotFound:
+                    LOGGER.info(
+                        "_delete_completed_channels: channel %s not found, cleaning up DB state",
+                        channel_id,
+                    )
+                    try:
+                        await asyncio.to_thread(self.db.delete_game_channel_state, channel_id)
+                    except Exception:
+                        pass
+                    continue
+                except Exception as exc:
+                    LOGGER.warning(
+                        "_delete_completed_channels: error fetching channel %s: %s",
+                        channel_id,
+                        exc,
+                    )
+                    continue
+
+            if not isinstance(channel, discord.TextChannel):
+                try:
+                    await asyncio.to_thread(self.db.delete_game_channel_state, channel_id)
+                except Exception:
+                    pass
+                continue
+
+            try:
+                await asyncio.to_thread(self.db.delete_game_channel_state, channel_id)
+                await channel.delete(reason="Game completed — auto-deleted by bot after 1 hour")
+                LOGGER.info("_delete_completed_channels: deleted channel %s", channel_id)
+            except discord.NotFound:
+                LOGGER.info("_delete_completed_channels: channel %s already gone", channel_id)
+            except discord.HTTPException as exc:
+                LOGGER.warning(
+                    "_delete_completed_channels: failed to delete channel %s: %s",
+                    channel_id,
                     exc,
                 )
 
