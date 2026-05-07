@@ -3511,6 +3511,149 @@ class NexusLeagueBot(discord.Client):
         except Exception as exc:
             LOGGER.warning("Failed to sync commands to guild %s: %s", guild.id, exc)
 
+        # Find the best channel to send the welcome message
+        channel: discord.TextChannel | None = None
+        me = guild.me
+        if guild.system_channel and guild.system_channel.permissions_for(me).send_messages:
+            channel = guild.system_channel
+        if channel is None:
+            channel = discord.utils.find(
+                lambda c: c.name == "general" and isinstance(c, discord.TextChannel) and c.permissions_for(me).send_messages,
+                guild.text_channels,
+            )
+        if channel is None:
+            channel = discord.utils.find(
+                lambda c: isinstance(c, discord.TextChannel) and c.permissions_for(me).send_messages,
+                guild.text_channels,
+            )
+
+        if channel is None:
+            LOGGER.warning("No writable channel found in guild %s to send welcome message.", guild.id)
+            return
+
+        separator = "━━━━━━━━━━━━━━━━━━━━"
+        welcome_embed = discord.Embed(
+            title="⚡ Welcome to NexusLeague!",
+            description="Thanks for adding NexusLeague Bot! Follow these steps to get started.",
+            color=0x00C853,
+        )
+        welcome_embed.add_field(name=separator, value="\u200b", inline=False)
+        welcome_embed.add_field(
+            name="Step 1 — Create Your League on the Website",
+            value=(
+                "Go to https://nexusexporter-clean-production.up.railway.app and sign in with Discord.\n"
+                "Create a new league — you'll get a unique **League ID** and **API Key**."
+            ),
+            inline=False,
+        )
+        welcome_embed.add_field(
+            name="Step 2 — Set Your League ID",
+            value=(
+                "Run this command to link this Discord server to your league:\n"
+                "`/setup league league_id:<your_league_id>`"
+            ),
+            inline=False,
+        )
+        welcome_embed.add_field(
+            name="Step 3 — Set Up Channels",
+            value=(
+                "Configure where the bot posts standings, leaders, and logs:\n"
+                "`/setup channels log:#your-log-channel leaders:#your-leaders-channel`\n\n"
+                "Optional: Set a news channel for weekly recaps:\n"
+                "`/setup news_channel channel:#your-news-channel`"
+            ),
+            inline=False,
+        )
+        welcome_embed.add_field(
+            name="Step 4 — Export from Madden",
+            value=(
+                "Download the Madden Companion App and export your franchise data.\n"
+                "Your API Key (from the website) is used to authenticate exports."
+            ),
+            inline=False,
+        )
+        welcome_embed.add_field(
+            name="Step 5 — Set OpenAI Key (optional, for AI headlines)",
+            value="`/setup openai_key key:sk-your-key-here`",
+            inline=False,
+        )
+        welcome_embed.add_field(
+            name="Step 6 — Check Your Config",
+            value="`/config`",
+            inline=False,
+        )
+        welcome_embed.add_field(name=separator, value="\u200b", inline=False)
+        welcome_embed.set_footer(text="Use /config at any time to review your setup.")
+
+        commands_embed = discord.Embed(
+            title="📋 NexusLeague — Command Reference",
+            color=0x5865F2,
+        )
+        commands_embed.add_field(
+            name="📊 League Stats",
+            value=(
+                "• `/standings` — Full league standings by division\n"
+                "• `/schedule week:<n>` — Games for a specific week\n"
+                "• `/roster team:<name>` — Team roster\n"
+                "• `/team info team:<name>` — Team overview and stats"
+            ),
+            inline=False,
+        )
+        commands_embed.add_field(
+            name="🏅 Stat Leaders",
+            value=(
+                "• `/leaders passing` — Top 5 passing yards leaders\n"
+                "• `/leaders rushing` — Top 5 rushing yards leaders\n"
+                "• `/leaders receiving` — Top 5 receiving yards leaders\n"
+                "• `/leaders touchdowns` — Top 5 TD leaders\n"
+                "• `/leaders defense` — Top 5 defensive leaders"
+            ),
+            inline=False,
+        )
+        commands_embed.add_field(
+            name="👤 Players",
+            value="• `/player search name:<name>` — Search for a player",
+            inline=False,
+        )
+        commands_embed.add_field(
+            name="📤 Post to Channel",
+            value=(
+                "• `/post standings` — Post standings to leaders channel\n"
+                "• `/post season_leaders` — Post all stat leader categories\n"
+                "• `/post headline` — Generate & post AI-powered headline\n"
+                "• `/post weekly_recap` — Post weekly recap summary"
+            ),
+            inline=False,
+        )
+        commands_embed.add_field(
+            name="⚙️ Admin Setup",
+            value=(
+                "• `/setup league league_id:<id>` — Link this server to a league\n"
+                "• `/setup channels log:#ch leaders:#ch` — Set log/leaders channels\n"
+                "• `/setup news_channel channel:#ch` — Set news channel\n"
+                "• `/setup openai_key key:<key>` — Set OpenAI API key for AI features\n"
+                "• `/config` — Show current server configuration"
+            ),
+            inline=False,
+        )
+        commands_embed.add_field(
+            name="🎮 Community",
+            value=(
+                "• `/xprank` — Show your XP rank and level\n"
+                "• `/xpleaderboard` — Server XP leaderboard\n"
+                "• `/bounties` — List active bounties\n"
+                "• `/claimbounty bounty_id:<id>` — Claim a bounty\n"
+                "• `/ping` — Check bot status"
+            ),
+            inline=False,
+        )
+        commands_embed.set_footer(text="All admin commands require server Administrator permission.")
+
+        try:
+            await channel.send(embeds=[welcome_embed, commands_embed])
+        except Exception as send_exc:
+            LOGGER.warning("Could not send welcome message to guild %s: %s", guild.id, send_exc)
+
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot or not message.guild:
             return
