@@ -1,10 +1,7 @@
-name: Test & Deploy to Railway
+name: Run Tests
 
-# ─────────────────────────────────────────────────────────────
-# Triggers:
-#   • Every push to `main`  → runs tests, then deploys both services
-#   • Every pull request     → runs tests only (no deploy)
-# ─────────────────────────────────────────────────────────────
+# Runs on every push to main AND on every pull request
+# Railway handles deployment automatically via its GitHub integration
 on:
   push:
     branches: [main]
@@ -12,32 +9,12 @@ on:
     branches: [main]
 
 jobs:
-
-  # ════════════════════════════════════════
-  # JOB 1 — Run the full test suite
-  # ════════════════════════════════════════
   test:
-    name: Run Tests
+    name: Run Test Suite
     runs-on: ubuntu-latest
 
-    services:
-      # Spin up a real Postgres so DB-touching tests work
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: nexus_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     env:
-      DATABASE_URL: sqlite:///test.db   # tests use SQLite by default (see test_api_ingest.py)
+      DATABASE_URL: sqlite:///test.db
       DISCORD_CLIENT_ID: test-client-id
       DISCORD_CLIENT_SECRET: test-client-secret
       DISCORD_REDIRECT_URI: http://localhost/oauth-callback
@@ -56,8 +33,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # Install test extras if not already in requirements
-          pip install pytest pytest-asyncio httpx --quiet
+          pip install pytest --quiet
 
       - name: Run API ingest tests
         run: python -m pytest test_api_ingest.py -v --tb=short
@@ -65,107 +41,12 @@ jobs:
       - name: Run bot unit tests
         run: python -m pytest tests/ -v --tb=short
 
-      - name: Print test summary
+      - name: Summary
         if: always()
-        run: echo "Tests complete for commit ${{ github.sha }}"
-
-
-  # ════════════════════════════════════════
-  # JOB 2 — Deploy the web app to Railway
-  # Only runs on push to main after tests pass
-  # ════════════════════════════════════════
-  deploy-web:
-    name: Deploy Web App
-    runs-on: ubuntu-latest
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Trigger Railway deploy — Web App
         run: |
-          echo "Deploying web app (main.py) to Railway..."
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST "${{ secrets.RAILWAY_DEPLOY_HOOK_WEB }}")
-          echo "Railway responded with HTTP $RESPONSE"
-          if [ "$RESPONSE" != "200" ] && [ "$RESPONSE" != "202" ]; then
-            echo "❌ Deploy hook failed with status $RESPONSE"
-            exit 1
-          fi
-          echo "✅ Web app deploy triggered successfully"
-
-      - name: Wait and verify deploy started
-        run: |
-          echo "Deploy triggered at $(date -u)"
-          echo "Monitor at: https://railway.app/dashboard"
-
-
-  # ════════════════════════════════════════
-  # JOB 3 — Deploy the Discord bot to Railway
-  # Only runs on push to main after tests pass
-  # ════════════════════════════════════════
-  deploy-bot:
-    name: Deploy Discord Bot
-    runs-on: ubuntu-latest
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Trigger Railway deploy — Discord Bot
-        run: |
-          echo "Deploying Discord bot (nexus_league_bot.py) to Railway..."
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST "${{ secrets.RAILWAY_DEPLOY_HOOK_BOT }}")
-          echo "Railway responded with HTTP $RESPONSE"
-          if [ "$RESPONSE" != "200" ] && [ "$RESPONSE" != "202" ]; then
-            echo "❌ Deploy hook failed with status $RESPONSE"
-            exit 1
-          fi
-          echo "✅ Bot deploy triggered successfully"
-
-      - name: Wait and verify deploy started
-        run: |
-          echo "Deploy triggered at $(date -u)"
-          echo "Monitor at: https://railway.app/dashboard"
-
-
-  # ════════════════════════════════════════
-  # JOB 4 — Post a summary to the PR / commit
-  # ════════════════════════════════════════
-  summary:
-    name: Deployment Summary
-    runs-on: ubuntu-latest
-    needs: [test, deploy-web, deploy-bot]
-    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    steps:
-      - name: Print summary
-        run: |
-          echo "════════════════════════════════════"
-          echo "  NEXUSLEAGUE DEPLOY SUMMARY"
-          echo "════════════════════════════════════"
+          echo "================================"
           echo "  Commit : ${{ github.sha }}"
           echo "  Branch : ${{ github.ref_name }}"
-          echo "  Actor  : ${{ github.actor }}"
-          echo "  Tests  : ${{ needs.test.result }}"
-          echo "  Web    : ${{ needs.deploy-web.result }}"
-          echo "  Bot    : ${{ needs.deploy-bot.result }}"
-          echo "════════════════════════════════════"
-
-          if [ "${{ needs.test.result }}" != "success" ]; then
-            echo "❌ Tests failed — deployment was blocked"
-            exit 1
-          fi
-
-          if [ "${{ needs.deploy-web.result }}" = "success" ] && \
-             [ "${{ needs.deploy-bot.result }}" = "success" ]; then
-            echo "✅ Both services deployed successfully"
-          else
-            echo "⚠️  One or more deploys failed — check Railway dashboard"
-            exit 1
-          fi
+          echo "  By     : ${{ github.actor }}"
+          echo "  Result : ${{ job.status }}"
+          echo "================================"
