@@ -18,6 +18,8 @@ from discord.ext import tasks
 import psycopg
 from psycopg.rows import dict_row
 
+from dotenv import load_dotenv
+
 from storyline_templates import (
     MATCHUP_ANGLES,
     MATCHUP_OPENERS,
@@ -40,6 +42,7 @@ from storyline_templates import (
     HEADLINE_LINE5,
 )
 
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 LOGGER = logging.getLogger("nexus-league-bot")
